@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { login, register, apiJson, session, type Session } from "../lib/api";
 export function Login() {
-  const [email, setEmail] = useState("arjun@example.com"); const [pw, setPw] = useState("Prototype!2026"); const [err, setErr] = useState(""); const nav = useNavigate();
+  // the demo user is pre-filled only when running locally (vite dev); a built, deployed copy starts with empty fields
+  const [email, setEmail] = useState(import.meta.env.DEV ? "arjun@example.com" : ""); const [pw, setPw] = useState(import.meta.env.DEV ? "Prototype!2026" : ""); const [err, setErr] = useState(""); const [showPw, setShowPw] = useState(false); const nav = useNavigate();
   // existing email, signed in, but no owner role anywhere — offer to add a new owned account
   const [needsOwner, setNeedsOwner] = useState(false);
   // user explicitly asked to self-register — never inferred from a failed login, since "invalid credentials" also
@@ -28,14 +30,14 @@ export function Login() {
       catch (x: any) { setErr(x.message); }
     }}>
       <div className="brand" style={{ color: "var(--navy)" }}><div className="brand-mark" />Family Office</div>
-      <input value={email} onChange={(e) => { setEmail(e.target.value); resetExtras(); }} placeholder="Email" /><input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password" />
+      <input value={email} onChange={(e) => { setEmail(e.target.value); resetExtras(); }} placeholder="Email" /><div style={{ position: "relative" }}><input type={showPw ? "text" : "password"} value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password" style={{ width: "100%", boxSizing: "border-box", paddingRight: 40 }} /><button type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Hide password" : "Show password"} title={showPw ? "Hide password" : "Show password"} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, padding: 4, cursor: "pointer", color: "var(--mute, #6b7280)", display: "flex" }}>{showPw ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>
       {err && <div className="err">{err}</div>}
       <button className="btn btn-p" type="submit">Sign in</button>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <Link className="small mute" to="/forgot-password">Forgot password?</Link>
         <a className="small mute" style={{ cursor: "pointer" }} onClick={() => setWantsNew(!wantsNew)}>{wantsNew ? "I already have an account" : "New here? Create an account"}</a>
       </div>
-      <div className="small mute">Seeded users: arjun / priya / ops / ca @example.com · Prototype!2026</div>
+      {import.meta.env.DEV && <div className="small mute">Seeded users: arjun / priya / ops / ca @example.com · Prototype!2026</div>}
     </form>
       {needsOwner && <div className="card" style={{ marginTop: 12 }}>
         <div className="small mute">You are not an owner on any account yet.</div>

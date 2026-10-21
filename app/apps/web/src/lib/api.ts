@@ -8,9 +8,11 @@ export const session = {
   family: (): string | null => localStorage.getItem(FKEY) ?? session.get()?.families[0]?.id ?? null,
   setFamily: (id: string) => localStorage.setItem(FKEY, id),
 };
+/** The error text for a failed auth call: the server's own message, or a plain explanation when it sent none (it is down or restarting). */
+const failText = async (r: Response, fallback: string) => ((await r.json().catch(() => null))?.title) ?? (r.status >= 500 ? `The server is not responding (HTTP ${r.status}). Try again in a minute.` : fallback);
 export async function login(email: string, password: string): Promise<Session> {
   const r = await fetch(`${API_URL}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
-  if (!r.ok) throw new Error((await r.json()).title ?? "Login failed");
+  if (!r.ok) throw new Error(await failText(r, "Login failed"));
   const s = await r.json(); session.set(s); if (s.families[0]) session.setFamily(s.families[0].id); return s;
 }
 /** Accept an invite: sets the password, then logs in (the accept endpoint itself returns no session). */
@@ -33,7 +35,7 @@ export async function resetPassword(email: string, token: string, password: stri
 /** Self-service sign-up (open signup — see routes/auth.ts for how to revert to invite-only). */
 export async function register(email: string, password: string, name: string, familyName: string): Promise<Session> {
   const r = await fetch(`${API_URL}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, name, family_name: familyName }) });
-  if (!r.ok) throw new Error((await r.json()).title ?? "Could not create account");
+  if (!r.ok) throw new Error(await failText(r, "Could not create account"));
   const s = await r.json(); session.set(s); if (s.families[0]) session.setFamily(s.families[0].id); return s;
 }
 /** Silent token refresh: the access token lives 15 minutes, the refresh token 30 days — this is what actually
