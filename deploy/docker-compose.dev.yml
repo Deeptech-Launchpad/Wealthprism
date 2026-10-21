@@ -1,0 +1,10 @@
+# Developer overlay: infrastructure only (Postgres seeded with the demo family, Redis, MinIO) with ports on localhost.
+# Run the code natively with hot reload — see ../DEV-SETUP.md.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.dev up -d postgres redis minio
+services:
+  postgres:
+    ports: ["5432:5432"]
+  redis:
+    ports: ["6379:6379"]
+  minio:
+    ports: ["9000:9000", "9001:9001"]

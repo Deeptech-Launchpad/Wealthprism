@@ -1,0 +1,4 @@
+{ "expo": { "name": "Family Office", "slug": "family-office", "version": "0.1.0", "orientation": "portrait", "scheme": "familyoffice", "userInterfaceStyle": "light",
+  "splash": { "backgroundColor": "#12213A" }, "ios": { "supportsTablet": false, "bundleIdentifier": "in.familyoffice.app", "infoPlist": { "NSFaceIDUsageDescription": "Approve actions with Face ID" } },
+  "android": { "package": "in.familyoffice.app", "adaptiveIcon": { "backgroundColor": "#12213A" } },
+  "plugins": ["expo-secure-store", "expo-local-authentication"], "extra": { "apiUrl": "https://api.yourfamilyoffice.in/api/v1" } } }

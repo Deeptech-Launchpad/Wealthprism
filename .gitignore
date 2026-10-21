@@ -1,0 +1,13 @@
+# Live secrets. deploy/.env holds this deployment's real passwords and keys — it is generated per
+# machine by deploy/bootstrap-vps.sh and must never be committed (CLAUDE.md, "Secrets never enter git").
+# .env.example and .env.dev are templates and laptop-only defaults, so they stay tracked.
+deploy/.env
+deploy/.env.local
+**/.env
+!**/.env.example
+!deploy/.env.dev
+
+# runtime
+app/.data/
+*.log
+.DS_Store

@@ -1,0 +1,16 @@
+Form 26AS - Annual Tax Statement under Section 203AA
+Permanent Account Number: ABCDE1234H	Financial Year: 2026-27	Assessment Year: 2027-28	Name of Assessee: MEHTA HUF
+
+PART A - Details of Tax Deducted at Source
+Sr. No.	Name of Deductor	TAN of Deductor	Total Amount Paid/Credited	Total Tax Deducted	Total TDS Deposited
+1	KOVAI ANALYTICS PVT LTD	CHEK01234A	17100.00	1710.00	1710.00
+Sr. No.	Section	Transaction Date	Status of Booking	Date of Booking	Remarks	Amount Paid/Credited	Tax Deducted	TDS Deposited
+1	194I	01-Sep-2026	F	15-Sep-2026	-	2850.00	285.00	285.00
+2	194I	01-Aug-2026	F	15-Aug-2026	-	2850.00	285.00	285.00
+3	194I	01-Jul-2026	F	15-Jul-2026	-	2850.00	285.00	285.00
+4	194I	01-Jun-2026	F	15-Jun-2026	-	2850.00	285.00	285.00
+5	194I	01-May-2026	F	15-May-2026	-	2850.00	285.00	285.00
+6	194I	01-Apr-2026	F	15-Apr-2026	-	2850.00	285.00	285.00
+
+2	STATE BANK OF INDIA	MUMS12345B	579.00	57.90	57.90
+1	194A	08-Sep-2026	F	20-Sep-2026	-	579.00	57.90	57.90

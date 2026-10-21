@@ -1,0 +1,148 @@
+-- Family Office — Investment Policy Framework data (FO-140..147). Apply after 018.
+-- Draft clause store on the version (ips_rules / glide_path live here until activation writes the live tables),
+-- rendered IPS, last simulation, instrument attributes for the demo holdings, seeded policies, reviews and links.
+
+alter table policy_versions add column if not exists ips_rules jsonb not null default '[]';
+alter table policy_versions add column if not exists glide_path jsonb;
+alter table policy_versions add column if not exists document_html text;
+alter table policy_versions add column if not exists simulation jsonb;
+alter table policy_versions add column if not exists updated_at timestamptz not null default now();
+alter table policy_compliance add column if not exists metrics jsonb not null default '{}';
+alter table risk_questionnaire_responses add column if not exists knowledge_score numeric(5,2);
+alter table investment_policies add column if not exists description text;
+create index if not exists policy_compliance_version_asof on policy_compliance (policy_version_id, as_of desc);
+create index if not exists risk_metrics_scope_asof on risk_metrics (family_id, scope_type, scope_id, as_of desc);
+grant select, insert, update, delete on instrument_attributes, ips_rules, ips_breaches, asset_class_targets, bucket_targets, glide_paths, execution_policies, goal_links, model_portfolios to app_user;
+
+-- ---------- instrument attributes for the demo holdings (look-through inputs) ----------
+insert into instrument_attributes (instrument_id, as_of, sector, industry, market_cap_band, credit_rating, rating_agency, modified_duration, issuer, manager, liquidity_class, expense_ratio_pct, source) values
+('44444444-0000-0000-0000-000000000001','2026-09-01','Financials','Private bank','large',null,null,null,'HDFC Bank',null,'t1',null,'seed'),
+('44444444-0000-0000-0000-000000000002','2026-09-01','IT','IT services','large',null,null,null,'Tata Consultancy Services',null,'t1',null,'seed'),
+('44444444-0000-0000-0000-000000000003','2026-09-01',null,null,'flexi',null,null,null,null,'PPFAS','t3',0.63,'seed'),
+('44444444-0000-0000-0000-000000000004','2026-09-01',null,null,'large',null,null,null,null,'Marcellus','quarterly',1.50,'seed'),
+('44444444-0000-0000-0000-000000000005','2026-09-01',null,'Private credit',null,null,null,2.10,null,'Neo Asset Management','locked',1.75,'seed'),
+('44444444-0000-0000-0000-000000000006','2026-09-01','Financials','Public bank',null,'AAA','CRISIL',5.20,'State Bank of India',null,'t1',null,'seed'),
+('44444444-0000-0000-0000-000000000007','2026-09-01',null,null,null,'AAA','CRISIL',0.10,null,'ICICI Prudential','t1',0.20,'seed'),
+('44444444-0000-0000-0000-000000000008','2026-09-01',null,null,'small',null,null,null,null,'Axis AMC','t3',0.55,'seed'),
+('44444444-0000-0000-0000-000000000009','2026-09-01',null,null,null,null,null,0.20,null,'Kotak AMC','t1',0.40,'seed')
+on conflict do nothing;
+
+-- the retirement goal draws on the HUF's flexi-cap fund and credit AIF (look-through scope for the goal policy)
+insert into goal_links (goal_id, holding_id, allocation_pct) values
+('77777777-0000-0000-0000-000000000002','46464646-0000-0000-0000-000000000002',100),
+('77777777-0000-0000-0000-000000000002','46464646-0000-0000-0000-000000000004',100),
+('77777777-0000-0000-0000-000000000001','46464646-0000-0000-0000-000000000006',100); -- MBA fund parked in Arjun's liquid fund
+
+-- ---------- policies ----------
+insert into investment_policies (id, family_id, scope, entity_id, goal_id, name, parent_policy_id, review_every_months, next_review_on, description) values
+('9a000000-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','family',null,null,'Mehta Family Investment Policy',null,12,'2027-04-01','Governs every portfolio of the family; entity and goal policies inherit it.'),
+('9a000000-0000-0000-0000-000000000002','11111111-1111-1111-1111-111111111111','entity','33333333-0000-0000-0000-000000000002',null,'Mehta HUF','9a000000-0000-0000-0000-000000000001',12,'2027-04-01','HUF income focus: lower equity, no unrated credit.'),
+('9a000000-0000-0000-0000-000000000003','11111111-1111-1111-1111-111111111111','goal',null,'77777777-0000-0000-0000-000000000002','Retirement income floor (2036)','9a000000-0000-0000-0000-000000000001',3,'2026-12-15','Assets set aside to fund the retirement income floor from 2036.'),
+('9a000000-0000-0000-0000-000000000004','11111111-1111-1111-1111-111111111111','goal',null,'77777777-0000-0000-0000-000000000001','Daughter''s overseas MBA (2029)','9a000000-0000-0000-0000-000000000001',6,'2027-02-28','Three years to a dated outflow: capital preservation.');
+
+-- family v1 → v2 → v3 (active)
+insert into policy_versions (id, family_id, policy_id, version, status, effective_from, effective_to, objectives, risk, constraints, permitted, rebalancing, monitoring, guardrails, ips_rules, change_summary, created_by, approved_by, approved_at, signed_by, created_at) values
+('9b000000-0000-0000-0000-000000000011','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000001',1,'superseded','2024-04-01','2025-03-31',
+ '{"purpose":"Preserve and grow the family''s wealth across generations while funding the stated goals.","return_objective_pct":5,"return_basis":"real","horizon_years":30,"spending_need_pa":18000}',
+ '{"profile":"moderate","score":56,"capacity":"high","tolerance":"moderate","max_drawdown_pct":-20}',
+ '{"liquidity_months":18,"tax":{"prefer_direct_plans":true,"ltcg_first":true,"use_exemptions":true}}',
+ '{"instrument_types":["stock","etf","mf","pms","aif","bond","sgb","gsec","tbill","fd"],"min_rating":"AA","prohibited":["f&o","crypto","unrated_debt","single_stocks > 5"],"managers":[]}',
+ '{"method":"calendar","calendar":"quarterly","tolerance_pp":5,"use_new_cash_first":true,"tax_aware":true}',
+ '{"benchmark_code":"BLEND_6040","tracking_error_max_pct":4,"report_to":["principal","ca"],"review_every_months":12,"triggers":["breach_persisting","drawdown","goal_change","new_entity","regulation"]}',
+ '{"execution_policies":[{"code":"max_single_amount","params":{"amount":500000}},{"code":"approvers_required","params":{"count":2,"above":2500000}},{"code":"cooling_off_minutes","params":{"minutes":30,"above":5000000}}],"approval_tiers":[{"up_to":500000,"approvers":1},{"up_to":2500000,"approvers":2},{"above":2500000,"approvers":2,"cooling_off_minutes":30}]}',
+ '[{"code":"max_single_issuer","params":{"pct":10},"severity":2},{"code":"max_single_manager","params":{"pct":25},"severity":2},{"code":"max_illiquid_pct","params":{"pct":25},"severity":2},{"code":"max_unrated_pct","params":{"pct":0},"severity":1}]',
+ 'Initial policy','22222222-0000-0000-0000-000000000001','22222222-0000-0000-0000-000000000001','2024-03-20T10:00:00+05:30','[{"user_id":"22222222-0000-0000-0000-000000000001","name":"Arjun Mehta","role":"principal","signed_at":"2024-03-20T10:05:00+05:30","auth_method":"totp"}]','2024-03-01'),
+('9b000000-0000-0000-0000-000000000012','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000001',2,'superseded','2025-04-01','2026-03-31',
+ '{"purpose":"Preserve and grow the family''s wealth across generations while funding the stated goals.","return_objective_pct":6,"return_basis":"real","horizon_years":30,"spending_need_pa":18000}',
+ '{"profile":"moderate","score":58,"capacity":"high","tolerance":"moderate","max_drawdown_pct":-20}',
+ '{"liquidity_months":24,"tax":{"prefer_direct_plans":true,"ltcg_first":true,"use_exemptions":true}}',
+ '{"instrument_types":["stock","etf","mf","pms","aif","bond","sgb","gsec","tbill","fd"],"min_rating":"AA","prohibited":["f&o","crypto","unrated_debt","single_stocks > 5"],"managers":[]}',
+ '{"method":"both","calendar":"quarterly","tolerance_pp":5,"use_new_cash_first":true,"tax_aware":true}',
+ '{"benchmark_code":"BLEND_6040","tracking_error_max_pct":4,"report_to":["principal","ca"],"review_every_months":12,"triggers":["breach_persisting","drawdown","goal_change","new_entity","regulation"]}',
+ '{"execution_policies":[{"code":"max_single_amount","params":{"amount":500000}},{"code":"approvers_required","params":{"count":2,"above":2500000}},{"code":"cooling_off_minutes","params":{"minutes":30,"above":5000000}}],"approval_tiers":[{"up_to":500000,"approvers":1},{"up_to":2500000,"approvers":2},{"above":2500000,"approvers":2,"cooling_off_minutes":30}]}',
+ '[{"code":"max_single_issuer","params":{"pct":10},"severity":2},{"code":"max_single_manager","params":{"pct":25},"severity":2},{"code":"max_illiquid_pct","params":{"pct":25},"severity":2},{"code":"max_unrated_pct","params":{"pct":0},"severity":1}]',
+ 'Liquidity 18 → 24 months; bands + calendar rebalancing; return objective 6% real','22222222-0000-0000-0000-000000000001','22222222-0000-0000-0000-000000000001','2025-03-22T10:00:00+05:30','[{"user_id":"22222222-0000-0000-0000-000000000001","name":"Arjun Mehta","role":"principal","signed_at":"2025-03-22T10:05:00+05:30","auth_method":"totp"},{"user_id":"22222222-0000-0000-0000-000000000002","name":"Priya Mehta","role":"member","signed_at":"2025-03-22T18:00:00+05:30","auth_method":"biometric"}]','2025-03-01'),
+('9b000000-0000-0000-0000-000000000013','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000001',3,'active','2026-04-01',null,
+ '{"purpose":"Preserve and grow the family''s wealth across generations while funding the stated goals.","return_objective_pct":6,"return_basis":"real","horizon_years":30,"spending_need_pa":18000}',
+ '{"profile":"moderate","score":58,"capacity":"high","tolerance":"moderate","max_drawdown_pct":-20}',
+ '{"liquidity_months":24,"tax":{"prefer_direct_plans":true,"ltcg_first":true,"use_exemptions":true},"legal":["No pledging of family holdings"],"unique":["Anna Nagar flat earmarked for sale by FY 2027-28"]}',
+ '{"instrument_types":["stock","etf","mf","pms","aif","bond","sgb","gsec","tbill","fd"],"min_rating":"AA","prohibited":["f&o","crypto","unrated_debt","single_stocks > 15"],"managers":["PPFAS","Marcellus","ICICI Prudential","Kotak AMC","Axis AMC","Neo Asset Management"]}',
+ '{"method":"both","calendar":"quarterly","tolerance_pp":5,"use_new_cash_first":true,"tax_aware":true}',
+ '{"benchmark_code":"BLEND_6040","tracking_error_max_pct":4,"report_to":["principal","ca"],"review_every_months":12,"triggers":["breach_persisting","drawdown","goal_change","new_entity","regulation"]}',
+ '{"execution_policies":[{"code":"max_single_amount","params":{"amount":500000}},{"code":"approvers_required","params":{"count":2,"above":2500000}},{"code":"cooling_off_minutes","params":{"minutes":30,"above":5000000}}],"approval_tiers":[{"up_to":500000,"approvers":1},{"up_to":2500000,"approvers":2},{"above":2500000,"approvers":2,"cooling_off_minutes":30}]}',
+ '[{"code":"max_single_issuer","params":{"pct":15},"severity":2},{"code":"max_single_manager","params":{"pct":25},"severity":2},{"code":"max_illiquid_pct","params":{"pct":65},"severity":2},{"code":"max_unrated_pct","params":{"pct":0},"severity":1}]',
+ 'Alternatives recognised as a sleeve (private credit, start-ups); approved manager list; illiquid cap 65%; single-stock cap 15%','22222222-0000-0000-0000-000000000001','22222222-0000-0000-0000-000000000001','2026-03-22T10:00:00+05:30','[{"user_id":"22222222-0000-0000-0000-000000000001","name":"Arjun Mehta","role":"principal","signed_at":"2026-03-22T10:05:00+05:30","auth_method":"totp"},{"user_id":"22222222-0000-0000-0000-000000000002","name":"Priya Mehta","role":"member","signed_at":"2026-03-22T18:00:00+05:30","auth_method":"biometric"},{"user_id":"22222222-0000-0000-0000-000000000004","name":"S. Krishnan (CA)","role":"reviewer","signed_at":"2026-03-21T16:00:00+05:30","auth_method":"totp"}]','2026-03-01'),
+-- HUF v1 → v2 (active): inherits the family policy, overrides allocation, liquidity, drawdown
+('9b000000-0000-0000-0000-000000000021','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000002',1,'superseded','2025-04-01','2026-03-31',
+ '{"purpose":"HUF corpus: steady income for the family with moderate growth."}','{"profile":"moderate","score":61,"max_drawdown_pct":-15}','{"liquidity_months":18}','{}','{}','{}','{}','[]','Initial HUF policy','22222222-0000-0000-0000-000000000001','22222222-0000-0000-0000-000000000001','2025-03-22T11:00:00+05:30','[{"user_id":"22222222-0000-0000-0000-000000000001","name":"Arjun Mehta","role":"karta","signed_at":"2025-03-22T11:05:00+05:30","auth_method":"totp"}]','2025-03-01'),
+('9b000000-0000-0000-0000-000000000022','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000002',2,'active','2026-04-01',null,
+ '{"purpose":"HUF corpus: steady income for the family with moderate growth."}','{"profile":"moderate","score":61,"max_drawdown_pct":-15}','{"liquidity_months":12}','{"min_rating":"AA+"}','{}','{}','{}','[{"code":"max_illiquid_pct","params":{"pct":90},"severity":3}]','Min rating AA+ on new debt; alternatives sleeve sized to the angel fund and credit AIF; liquidity floor 12 months','22222222-0000-0000-0000-000000000001','22222222-0000-0000-0000-000000000001','2026-03-22T11:00:00+05:30','[{"user_id":"22222222-0000-0000-0000-000000000001","name":"Arjun Mehta","role":"karta","signed_at":"2026-03-22T11:05:00+05:30","auth_method":"totp"}]','2026-03-01'),
+-- Retirement goal v1 (active from 15 Jun 2026): 6 overrides on the family policy
+('9b000000-0000-0000-0000-000000000031','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000003',1,'active','2026-06-15',null,
+ '{"purpose":"Provide the family''s retirement income floor from 2036, held in Mehta HUF.","return_objective_pct":5,"return_basis":"real","horizon_years":10,"spending_need_pa":9500}',
+ '{"profile":"moderately_conservative","score":44,"capacity":"moderate","tolerance":"moderate","max_drawdown_pct":-12,"questionnaire_response_id":"9d000000-0000-0000-0000-000000000001"}',
+ '{"liquidity_months":0,"unique":["Liquidity is held at family level; this sleeve stays invested"]}','{"min_rating":"AA+"}','{}','{"benchmark_code":"BLEND_6040","tracking_error_max_pct":3,"report_to":["principal","ca"],"review_every_months":3}','{}',
+ '[{"code":"max_single_manager","params":{"pct":80},"severity":3},{"code":"max_illiquid_pct","params":{"pct":50},"severity":2}]','Initial goal policy from the June 2026 questionnaire','22222222-0000-0000-0000-000000000001','22222222-0000-0000-0000-000000000001','2026-06-15T09:00:00+05:30','[{"user_id":"22222222-0000-0000-0000-000000000001","name":"Arjun Mehta","role":"principal","signed_at":"2026-06-15T09:10:00+05:30","auth_method":"totp"},{"user_id":"22222222-0000-0000-0000-000000000002","name":"Priya Mehta","role":"member","signed_at":"2026-06-15T20:00:00+05:30","auth_method":"biometric"}]','2026-06-01'),
+-- MBA goal v1 (superseded by the amount change) → v2 in review
+('9b000000-0000-0000-0000-000000000041','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000004',1,'active','2025-10-01',null,
+ '{"purpose":"Fund the MBA fees and living costs from 2029.","return_objective_pct":2,"return_basis":"real","horizon_years":3,"spending_need_pa":0}','{"profile":"conservative","score":26,"max_drawdown_pct":-5}','{"liquidity_months":12}','{"prohibited":["f&o","crypto","unrated_debt","single_stocks > 5","pms","aif"]}','{"method":"calendar","calendar":"quarterly"}','{}','{}','[]','Initial goal policy','22222222-0000-0000-0000-000000000002','22222222-0000-0000-0000-000000000001','2025-09-25T09:00:00+05:30','[{"user_id":"22222222-0000-0000-0000-000000000001","name":"Arjun Mehta","role":"principal","signed_at":"2025-09-25T09:10:00+05:30","auth_method":"totp"}]','2025-09-10'),
+('9b000000-0000-0000-0000-000000000042','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000004',2,'in_review',null,null,
+ '{"purpose":"Fund the MBA fees and living costs from 2029 (target raised to ₹2.0 L).","return_objective_pct":2,"return_basis":"real","horizon_years":3,"spending_need_pa":0}','{"profile":"conservative","score":26,"max_drawdown_pct":-5}','{"liquidity_months":12}','{"prohibited":["f&o","crypto","unrated_debt","single_stocks > 5","pms","aif"]}','{"method":"calendar","calendar":"quarterly"}','{}','{}','[]','Target amount changed ₹1.6 L → ₹2.0 L: contribution raised, equity band narrowed','22222222-0000-0000-0000-000000000002',null,null,'[]','2026-08-28');
+
+update investment_policies set current_version_id = '9b000000-0000-0000-0000-000000000013' where id = '9a000000-0000-0000-0000-000000000001';
+update investment_policies set current_version_id = '9b000000-0000-0000-0000-000000000022' where id = '9a000000-0000-0000-0000-000000000002';
+update investment_policies set current_version_id = '9b000000-0000-0000-0000-000000000031' where id = '9a000000-0000-0000-0000-000000000003';
+update investment_policies set current_version_id = '9b000000-0000-0000-0000-000000000041' where id = '9a000000-0000-0000-0000-000000000004';
+
+-- allocation clauses (bucket lens + asset-class lens with bands)
+insert into policy_allocations (family_id, policy_version_id, lens, key, target_pct, min_pct, max_pct) values
+-- family v1/v2 (history)
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000011','asset_class','equity',60,50,70),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000011','asset_class','debt',30,20,40),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000011','asset_class','gold',5,3,10),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000011','asset_class','cash',5,3,10),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000012','asset_class','equity',60,50,70),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000012','asset_class','debt',25,20,35),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000012','asset_class','gold',5,3,10),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000012','asset_class','cash',10,5,15),
+-- family v3 (active): the financial portfolio, private holdings recognised as an alternatives sleeve
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','asset_class','equity',30,20,40),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','asset_class','debt',5,0,15),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','asset_class','alternatives',55,40,65),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','asset_class','cash',10,5,20),
+-- HUF v1/v2
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000021','asset_class','equity',40,30,50),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000021','asset_class','debt',40,30,50),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000021','asset_class','gold',5,0,10),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000021','asset_class','cash',15,5,25),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','asset_class','equity',10,5,20),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','asset_class','debt',5,0,15),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','asset_class','alternatives',75,65,85),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','asset_class','cash',10,5,20),
+-- Retirement v1: two-position sleeve (flexi-cap fund + credit AIF)
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','bucket','growth',60,50,70),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','bucket','income',35,25,45),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','bucket','liquidity',5,0,10),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','asset_class','equity',45,35,55),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','asset_class','alternatives',40,30,50),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','asset_class','debt',10,0,20),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','asset_class','cash',5,0,10),
+-- MBA v1 / v2: parked in a liquid fund, debt allowed as the date approaches
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000041','asset_class','cash',60,40,100),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000041','asset_class','debt',40,0,60),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000041','asset_class','equity',0,0,10),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000042','asset_class','cash',50,30,100),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000042','asset_class','debt',50,0,70),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000042','asset_class','equity',0,0,10);
+
+insert into policy_risk_limits (family_id, policy_version_id, metric, operator, limit_value, warn_value, severity) values
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','volatility_1y','<=',18,15,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','max_drawdown','>=',-20,-15,1),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','var_95_1m','<=',6,5,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','beta','<=',0.9,0.8,3),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','tracking_error','<=',4,3,3),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','concentration_top5','<=',75,65,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','issuer_max','<=',15,12,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','manager_max','<=',25,20,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','illiquid_max','<=',65,55,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','liquidity_coverage_months_min','>=',24,27,1),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000013','unrated_debt_max','<=',0,null,1),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','max_drawdown','>=',-15,-12,1),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','volatility_1y','<=',14,12,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','illiquid_max','<=',85,82,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000022','liquidity_coverage_months_min','>=',12,13,1),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','max_drawdown','>=',-12,-9,1),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','volatility_1y','<=',14,11,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','var_95_1m','<=',4,3,2),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','beta','<=',0.7,0.6,3),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','tracking_error','<=',3,2,3),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','liquidity_coverage_months_min','>=',0,null,3),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000031','manager_max','<=',80,75,3),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000041','max_drawdown','>=',-5,-4,1),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000041','volatility_1y','<=',6,5,2),
+('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000042','max_drawdown','>=',-5,-4,1),('11111111-1111-1111-1111-111111111111','9b000000-0000-0000-0000-000000000042','volatility_1y','<=',5,4,2);
+
+-- the retirement goal's glide path lives in its policy version (activation wrote glide_paths)
+update policy_versions set glide_path = '{"steps":[{"year":2026,"growth_pct":60},{"year":2028,"growth_pct":58},{"year":2031,"growth_pct":50},{"year":2033,"growth_pct":40},{"year":2036,"growth_pct":27}]}' where id = '9b000000-0000-0000-0000-000000000031';
+update glide_paths set policy_version_id = '9b000000-0000-0000-0000-000000000031', steps = '[{"year":2026,"growth_pct":60},{"year":2028,"growth_pct":58},{"year":2031,"growth_pct":50},{"year":2033,"growth_pct":40},{"year":2036,"growth_pct":27}]' where goal_id = '77777777-0000-0000-0000-000000000002';
+
+-- live tables carry the active versions (what activation writes)
+update bucket_targets set policy_version_id = '9b000000-0000-0000-0000-000000000013' where family_id = '11111111-1111-1111-1111-111111111111' and entity_id is null;
+insert into asset_class_targets (family_id, entity_id, alloc_class, target_pct, min_pct, max_pct, effective_from, policy_version_id) values
+('11111111-1111-1111-1111-111111111111',null,'equity',30,20,40,'2026-04-01','9b000000-0000-0000-0000-000000000013'),('11111111-1111-1111-1111-111111111111',null,'debt',5,0,15,'2026-04-01','9b000000-0000-0000-0000-000000000013'),('11111111-1111-1111-1111-111111111111',null,'alternatives',55,40,65,'2026-04-01','9b000000-0000-0000-0000-000000000013'),('11111111-1111-1111-1111-111111111111',null,'cash',10,5,20,'2026-04-01','9b000000-0000-0000-0000-000000000013'),
+('11111111-1111-1111-1111-111111111111','33333333-0000-0000-0000-000000000002','equity',10,5,20,'2026-04-01','9b000000-0000-0000-0000-000000000022'),('11111111-1111-1111-1111-111111111111','33333333-0000-0000-0000-000000000002','debt',5,0,15,'2026-04-01','9b000000-0000-0000-0000-000000000022'),('11111111-1111-1111-1111-111111111111','33333333-0000-0000-0000-000000000002','alternatives',75,65,85,'2026-04-01','9b000000-0000-0000-0000-000000000022'),('11111111-1111-1111-1111-111111111111','33333333-0000-0000-0000-000000000002','cash',10,5,20,'2026-04-01','9b000000-0000-0000-0000-000000000022')
+on conflict do nothing;
+insert into ips_rules (family_id, entity_id, code, params, severity, active, policy_version_id) values
+('11111111-1111-1111-1111-111111111111',null,'max_single_issuer','{"pct":15}',2,true,'9b000000-0000-0000-0000-000000000013'),('11111111-1111-1111-1111-111111111111',null,'max_single_manager','{"pct":25}',2,true,'9b000000-0000-0000-0000-000000000013'),('11111111-1111-1111-1111-111111111111',null,'max_illiquid_pct','{"pct":65}',2,true,'9b000000-0000-0000-0000-000000000013'),('11111111-1111-1111-1111-111111111111',null,'max_unrated_pct','{"pct":0}',1,true,'9b000000-0000-0000-0000-000000000013');
+insert into execution_policies (family_id, entity_id, intent_kind, code, params, active, created_by, policy_version_id) values
+('11111111-1111-1111-1111-111111111111',null,null,'max_single_amount','{"amount":500000}',true,'22222222-0000-0000-0000-000000000001','9b000000-0000-0000-0000-000000000013'),
+('11111111-1111-1111-1111-111111111111',null,null,'approvers_required','{"count":2,"above":2500000}',true,'22222222-0000-0000-0000-000000000001','9b000000-0000-0000-0000-000000000013'),
+('11111111-1111-1111-1111-111111111111',null,null,'cooling_off_minutes','{"minutes":30,"above":5000000}',true,'22222222-0000-0000-0000-000000000001','9b000000-0000-0000-0000-000000000013');
+
+-- the June 2026 questionnaire for the retirement goal (weighted 44 → moderately conservative; capacity caps tolerance)
+insert into risk_questionnaire_responses (id, family_id, questionnaire_id, entity_id, goal_id, respondent_user_id, answers, score, capacity_score, tolerance_score, horizon_score, knowledge_score, profile, completed_at)
+select '9d000000-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111', q.id, '33333333-0000-0000-0000-000000000002','77777777-0000-0000-0000-000000000002','22222222-0000-0000-0000-000000000001',
+ '{"q1":"50–100%","q2":"6–24","q3":"20–50%","q4":"Over 30%","q5":"Hold and wait","q6":"10–15%","q7":"Balanced","q8":"Held through","q9":"5–15","q10":"3–10 years","q11":"Moderate","q12":"Joint"}',44.38,37.5,50,50,50,'moderately_conservative','2026-06-10T11:30:00+05:30'
+from risk_questionnaires q where q.family_id is null and q.name = 'Standard family risk profile';
+
+-- reviews: history and what is due
+insert into policy_reviews (id, family_id, policy_id, kind, trigger_reason, due_on, status, started_at, completed_at, reviewer_user_id, findings, outcome, resulting_version_id, note) values
+('9c000000-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000001','scheduled','scheduled','2026-04-01','completed','2026-03-10T10:00:00+05:30','2026-03-22T10:00:00+05:30','22222222-0000-0000-0000-000000000001','{"summary":"11 months compliant, one issuer warning resolved in 14 days; alternatives sleeve exceeded the old bands as the credit AIF and start-up rounds closed"}','amended','9b000000-0000-0000-0000-000000000013','Annual review with the CA'),
+('9c000000-0000-0000-0000-000000000002','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000004','trigger','goal_change','2026-08-28','completed','2026-08-28T09:00:00+05:30','2026-08-28T17:00:00+05:30','22222222-0000-0000-0000-000000000002','{"summary":"Target amount changed ₹1.6 L → ₹2.0 L; contribution raised; equity band narrowed"}','amended','9b000000-0000-0000-0000-000000000042','Draft v2 sent for review'),
+('9c000000-0000-0000-0000-000000000003','11111111-1111-1111-1111-111111111111','9a000000-0000-0000-0000-000000000003','scheduled','scheduled','2026-12-15','due',null,null,null,null,null,null,null);

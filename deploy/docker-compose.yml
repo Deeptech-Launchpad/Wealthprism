@@ -1,0 +1,158 @@
+# Family Office — production compose for a single VPS (Hostinger KVM 2 or larger).
+# Everything runs as containers; move to another host by copying this directory + volumes.
+# Usage:  cp .env.example .env && edit && docker compose up -d
+
+name: familyoffice
+
+x-api-common: &api-common
+  image: ghcr.io/${GH_ORG}/familyoffice-api:${IMAGE_TAG:-latest}
+  build: { context: ../app, dockerfile: deploy/api.Dockerfile }
+  env_file: .env
+  environment:
+    DATABASE_URL: postgres://app_user:${APP_DB_PASSWORD}@postgres:5432/familyoffice
+    MIGRATION_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/familyoffice
+    REDIS_URL: redis://redis:6379
+    S3_ENDPOINT: http://minio:9000
+    S3_BUCKET: documents
+    S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+    S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    TZ: Asia/Kolkata
+  volumes:
+    - ../db:/db:ro
+    - ../api:/api:ro
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    minio: { condition: service_started }
+  restart: unless-stopped
+  logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports: ["127.0.0.1:8080:80"]
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+    depends_on: [web, api]
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/${GH_ORG}/familyoffice-web:${IMAGE_TAG:-latest}
+    build:
+      context: ../app
+      dockerfile: deploy/web.Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+    restart: unless-stopped
+    expose: ["80"]
+
+  api:
+    <<: *api-common
+    command: ["node", "dist/server.js"]
+    expose: ["4000"]
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:4000/healthz"], interval: 30s, timeout: 5s, retries: 3 }
+
+  worker:
+    <<: *api-common
+    command: ["node", "dist/server.js"]   # worker entry lands with FO-27 (BullMQ); runs API for now
+
+  executor:
+    image: ghcr.io/${GH_ORG}/familyoffice-executor:${IMAGE_TAG:-latest}
+    build: { context: ../app, dockerfile: deploy/executor.Dockerfile }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://executor_user:${EXECUTOR_DB_PASSWORD}@postgres:5432/familyoffice
+      REDIS_URL: redis://redis:6379
+      SANDBOX_ONLY: ${SANDBOX_ONLY:-true}
+      EXECUTOR_POLL_SECONDS: "10"
+      EGRESS_ALLOWLIST: api.kite.trade,api.upstox.com,apiconnect.angelbroking.com,api.icicidirect.com,api.dhan.co,bsestarmf.in,api.setu.co,api.razorpay.com
+      TZ: Asia/Kolkata
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "10" } }
+
+  vault:
+    profiles: ["vault"]
+    image: hashicorp/vault:1.17
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_ADDR: http://0.0.0.0:8200
+    command: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    volumes:
+      - ./vault/vault.hcl:/vault/config/vault.hcl:ro
+      - vault_data:/vault/file
+    expose: ["8200"]
+    restart: unless-stopped
+
+  migrate:
+    <<: *api-common
+    command: ["node", "dist/migrate.js"]
+    restart: "no"
+    profiles: ["ops"]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: familyoffice
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      EXECUTOR_DB_PASSWORD: ${EXECUTOR_DB_PASSWORD}
+      SEED_ON_START: ${SEED_ON_START:-false}
+      TZ: Asia/Kolkata
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./scripts/pg-init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+      - ../db:/db:ro
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_connections=100", "-c", "log_min_duration_statement=500"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres -d familyoffice"], interval: 10s, timeout: 5s, retries: 10 }
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes: [redis_data:/data]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 3s, retries: 5 }
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: [minio_data:/data]
+    expose: ["9000", "9001"]
+    restart: unless-stopped
+
+  backup:
+    image: postgres:16-alpine
+    env_file: .env
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Asia/Kolkata
+    volumes:
+      - ./scripts/backup.sh:/backup.sh:ro
+      - backups:/backups
+      - minio_data:/minio:ro
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache rclone >/dev/null 2>&1; while true; do /backup.sh; sleep 86400; done"]
+    depends_on: [postgres]
+    restart: unless-stopped
+
+volumes:
+  vault_data: {}
+  pg_data: {}
+  redis_data: {}
+  minio_data: {}
+  backups: {}
+  caddy_data: {}
+  caddy_config: {}

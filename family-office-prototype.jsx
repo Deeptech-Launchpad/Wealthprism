@@ -1,0 +1,1679 @@
+import { useState, useEffect } from "react";
+import {
+  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid, Legend, LineChart, Line
+} from "recharts";
+import {
+  LayoutDashboard, TrendingUp, Building2, Rocket, Target, Landmark, Droplets,
+  FileText, FolderOpen, Settings, Bell, Search, Smartphone, Monitor, ChevronRight,
+  ArrowUpRight, ArrowDownRight, Circle, CheckCircle2, AlertTriangle, Upload, Plus,
+  Download, Filter, Wifi, RefreshCw, Menu, X, Calculator, GitBranch, MessageSquare, Play, BookOpen, Lock, Unlock, Zap, ShieldCheck, Bot, Fingerprint, Pause, ScrollText, ClipboardCheck, Inbox, Newspaper, ThumbsUp, ThumbsDown, Clock, Scale, CalendarDays
+} from "lucide-react";
+
+/* ---------- money helpers ---------- */
+const inr = (n) => {
+  if (Math.abs(n) >= 1e5) return `₹${(n / 1e5).toFixed(2)} L`;
+  return `₹${n.toLocaleString("en-IN")}`;
+};
+const pct = (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}%`;
+
+/* ---------- palette ---------- */
+const C = {
+  navy: "#12213A", ink: "#1B2A41", paper: "#F5F6F8", card: "#FFFFFF",
+  line: "#E3E6EB", mute: "#6B7686", teal: "#0E7C6B", tealSoft: "#E3F3EF",
+  amber: "#B7791F", amberSoft: "#FBF1DF", red: "#B93B31", redSoft: "#F9E6E4",
+  blue: "#2F5D9C", blueSoft: "#E6EDF7", violet: "#6B4FA0",
+};
+const BUCKET = { Liquidity: C.blue, Income: C.teal, Growth: C.violet };
+
+/* ---------- sample data ---------- */
+const ENTITIES = ["All entities", "Arjun Mehta", "Mehta HUF", "Spouse (Individual)"];
+
+const NET_WORTH_TREND = [
+  { m: "Oct", v: 41.2 }, { m: "Nov", v: 42 }, { m: "Dec", v: 43.4 }, { m: "Jan", v: 42.9 },
+  { m: "Feb", v: 44.1 }, { m: "Mar", v: 45.6 }, { m: "Apr", v: 46.2 }, { m: "May", v: 47.8 },
+  { m: "Jun", v: 47.1 }, { m: "Jul", v: 48.9 }, { m: "Aug", v: 50.3 }, { m: "Sep", v: 51.4 },
+];
+
+const ALLOC = [
+  { name: "Listed equity", value: 11.6, bucket: "Growth" },
+  { name: "Mutual funds", value: 8.9, bucket: "Growth" },
+  { name: "Global (US ETFs, intl FoF)", value: 2.1, bucket: "Growth" },
+  { name: "Gold & silver (SGB, ETF, physical)", value: 1.4, bucket: "Income" },
+  { name: "PMS / AIF", value: 6.1, bucket: "Growth" },
+  { name: "Startups", value: 2.4, bucket: "Growth" },
+  { name: "Real estate", value: 11.6, bucket: "Income" },
+  { name: "Bonds / FDs", value: 4.1, bucket: "Income" },
+  { name: "Liquid / cash", value: 3.2, bucket: "Liquidity" },
+];
+
+const BUCKETS = [
+  { name: "Liquidity", target: 8, actual: 6.2, desc: "24 months of expenses + committed outflows" },
+  { name: "Income", target: 32, actual: 30.5, desc: "Rent, coupons, dividends covering lifestyle" },
+  { name: "Growth", target: 60, actual: 63.3, desc: "Long-horizon compounding, 10+ years" },
+];
+
+const HOLDINGS = [
+  { name: "HDFC Bank", type: "Stock", entity: "Arjun", qty: 4200, cost: 61.8, value: 72.4, xirr: 14.2, bucket: "Growth" },
+  { name: "Parag Parikh Flexi Cap", type: "Mutual fund", entity: "HUF", qty: 38210, cost: 1.42, value: 2.11, xirr: 18.9, bucket: "Growth" },
+  { name: "Marcellus Consistent Compounders", type: "PMS", entity: "Arjun", qty: "—", cost: 2.5, value: 3.04, xirr: 11.6, bucket: "Growth" },
+  { name: "Neo Special Credit AIF", type: "AIF Cat II", entity: "HUF", qty: "—", cost: 1, value: 1.08, xirr: 9.4, bucket: "Income" },
+  { name: "SBI 7.72% 2033 bond", type: "Bond", entity: "Spouse", qty: 150, cost: 1.5, value: 1.53, xirr: 7.6, bucket: "Income" },
+  { name: "ICICI Liquid Fund", type: "Liquid MF", entity: "Arjun", qty: 8112, cost: 2.8, value: 2.91, xirr: 6.9, bucket: "Liquidity" },
+  { name: "TCS", type: "Stock", entity: "Spouse", qty: 900, cost: 27.4, value: 34.1, xirr: 12.1, bucket: "Growth" },
+];
+
+const CAP_GAINS = [
+  { fy: "FY 2026-27 (YTD)", stcg: 4.2, ltcg: 11.8, taxable: 10.55, tax: 0.09 },
+  { fy: "FY 2025-26", stcg: 9.1, ltcg: 24.6, taxable: 23.35, tax: 0.61 },
+];
+
+const PROPERTIES = [
+  { name: "Race Course Road office, Coimbatore", entity: "Mehta HUF", type: "Commercial", value: 480000, rent: 2850, tenant: "Kovai Analytics Pvt Ltd", gst: true, tax: 482, lease: "Mar 2028", yield: 7.1 },
+  { name: "Saibaba Colony apartment", entity: "Arjun Mehta", type: "Residential", value: 190000, rent: 420, tenant: "R. Sundaram", gst: false, tax: 114, lease: "Aug 2027", yield: 2.7 },
+  { name: "Anna Nagar retail unit, Chennai", entity: "Spouse (Individual)", type: "Commercial", value: 360000, rent: 1650, tenant: "Bloom Pharmacy", gst: true, tax: 360, lease: "Dec 2026", yield: 5.5 },
+  { name: "Ooty farmland (12 acres)", entity: "Mehta HUF", type: "Land", value: 130000, rent: 0, tenant: "—", gst: false, tax: 32, lease: "—", yield: 0 },
+];
+
+const RENT_LEDGER = [
+  { d: "01 Sep 2026", prop: "Race Course Road office", amt: 2850, gst: 513, tds: 285, status: "Received" },
+  { d: "03 Sep 2026", prop: "Anna Nagar retail unit", amt: 1650, gst: 297, tds: 165, status: "Received" },
+  { d: "05 Sep 2026", prop: "Saibaba Colony apartment", amt: 420, gst: 0, tds: 0, status: "Overdue 6 days" },
+];
+
+const MAINTENANCE = [
+  { d: "22 Aug 2026", prop: "Anna Nagar retail unit", item: "AC compressor replacement", amt: 385, vendor: "Cool Care Services" },
+  { d: "12 Aug 2026", prop: "Saibaba Colony apartment", item: "Society maintenance Q2", amt: 144, vendor: "SBC Owners Assn" },
+  { d: "02 Aug 2026", prop: "Race Course Road office", item: "Fire safety AMC", amt: 220, vendor: "Safeguard Systems" },
+];
+
+const RENT_VS_COST = [
+  { m: "Apr", rent: 0.92, cost: 0.84 }, { m: "May", rent: 0.92, cost: 0.41 }, { m: "Jun", rent: 0.92, cost: 1.32 },
+  { m: "Jul", rent: 0.92, cost: 0.55 }, { m: "Aug", rent: 0.92, cost: 0.75 }, { m: "Sep", rent: 0.50, cost: 0.12 },
+];
+
+const STARTUPS = [
+  { name: "Cropsense AgriTech", stage: "Series A", inst: "CCPS", invested: 50000, held: "1.8%", mark: 121000, date: "Jun 2023", next: "Series B talks, Q4 2026", status: "Active" },
+  { name: "Lumen Diagnostics", stage: "Seed", inst: "SAFE (post-money)", invested: 25000, held: "—", mark: 25000, date: "Jan 2025", next: "Priced round expected Mar 2027", status: "Unconverted" },
+  { name: "Threadline Commerce", stage: "Pre-seed", inst: "Equity", invested: 15000, held: "3.2%", mark: 42000, date: "Nov 2022", next: "Secondary offer received", status: "Active" },
+  { name: "Orbital Logistics", stage: "Seed", inst: "CCD", invested: 30000, held: "—", mark: 0, date: "Aug 2021", next: "Wound up, loss claimed", status: "Written off" },
+  { name: "Varaha Angel Fund II", stage: "AIF Cat I", inst: "Fund units", invested: 120000, held: "Units", mark: 138999.99999999997, date: "Rolling", next: "Drawdown 4 of 6 due Oct", status: "Active" },
+];
+
+const GOALS = [
+  { name: "Daughter's overseas MBA", year: 2029, need: 160000, funded: 68, bucket: "Income", entity: "Arjun" },
+  { name: "Retirement income floor", year: 2036, need: 950000, funded: 54, bucket: "Income", entity: "HUF" },
+  { name: "Second home, Kodaikanal", year: 2031, need: 320000, funded: 31, bucket: "Growth", entity: "Spouse" },
+  { name: "Emergency & contingency", year: 2026, need: 60000, funded: 100, bucket: "Liquidity", entity: "Arjun" },
+  { name: "Philanthropy endowment", year: 2040, need: 500000, funded: 12, bucket: "Growth", entity: "HUF" },
+];
+
+const REBALANCE_TASKS = [
+  { task: "Move ₹180 from Parag Parikh Flexi Cap to ICICI Liquid Fund", why: "Liquidity bucket 1.8% under target", entity: "HUF", due: "15 Sep", done: false },
+  { task: "Deploy Sep rent surplus ₹31 into arbitrage fund", why: "Working capital rule: idle > 30 days", entity: "Arjun", due: "12 Sep", done: false },
+  { task: "Book LTCG of ₹1.25 L in TCS before 31 Mar", why: "Use ₹1.25 L exemption", entity: "Spouse", due: "31 Mar", done: false },
+  { task: "Renew Anna Nagar lease with 8% escalation", why: "Lease expires Dec 2026", entity: "Spouse", due: "30 Oct", done: true },
+];
+
+const BANK_ACCTS = [
+  { bank: "HDFC Bank", acct: "••4471", entity: "Arjun Mehta", type: "Savings", bal: 21485, synced: "2 min ago", live: true },
+  { bank: "ICICI Bank", acct: "••0928", entity: "Mehta HUF", type: "Current", bal: 18623, synced: "2 min ago", live: true },
+  { bank: "Kotak Bank", acct: "••7715", entity: "Spouse (Individual)", type: "Savings", bal: 9342, synced: "11 min ago", live: true },
+  { bank: "HDFC Infinia", acct: "••3320", entity: "Arjun Mehta", type: "Credit card", bal: -1846, synced: "2 min ago", live: true },
+  { bank: "SBI", acct: "••1102", entity: "Mehta HUF", type: "Savings", bal: 4120, synced: "CSV, 4 Sep", live: false },
+];
+
+const TXNS = [
+  { d: "11 Sep", desc: "NEFT — Kovai Analytics (rent)", cat: "Rental income", acct: "ICICI ••0928", amt: 2565 },
+  { d: "11 Sep", desc: "UPI — Apollo Pharmacy", cat: "Medical", acct: "HDFC ••4471", amt: -32 },
+  { d: "10 Sep", desc: "Dividend — HDFC Bank", cat: "Dividend", acct: "HDFC ••4471", amt: 798 },
+  { d: "10 Sep", desc: "SIP — Parag Parikh Flexi Cap", cat: "Investment", acct: "ICICI ••0928", amt: -2000 },
+  { d: "09 Sep", desc: "Card — Taj Coromandel", cat: "Dining", acct: "Infinia ••3320", amt: -186 },
+  { d: "09 Sep", desc: "Property tax — CCMC", cat: "Property tax", acct: "ICICI ••0928", amt: -482 },
+  { d: "08 Sep", desc: "Interest — SBI bond coupon", cat: "Interest", acct: "Kotak ••7715", amt: 579 },
+];
+
+const WC_LADDER = [
+  { inst: "Overnight fund", horizon: "0–7 days", amt: 120, yld: 6.3, tax: "Slab", eff: 4.4, color: C.blue },
+  { inst: "Liquid fund", horizon: "7–90 days", amt: 290, yld: 6.9, tax: "Slab", eff: 4.8, color: C.blue },
+  { inst: "Arbitrage fund", horizon: "3–12 months", amt: 450, yld: 7.1, tax: "Equity STCG 20%", eff: 5.7, color: C.teal },
+  { inst: "T-bill ladder (91/182/364)", horizon: "3–12 months", amt: 300, yld: 6.7, tax: "Slab", eff: 4.7, color: C.amber },
+  { inst: "Target maturity debt", horizon: "1–3 years", amt: 200, yld: 7.4, tax: "Slab", eff: 5.2, color: C.violet },
+];
+
+/* ---------- small UI atoms ---------- */
+const Card = ({ title, action, children, style }) => (
+  <section className="card" style={style}>
+    {(title || action) && (
+      <header className="card-h">
+        <h3>{title}</h3>
+        {action}
+      </header>
+    )}
+    {children}
+  </section>
+);
+const Pill = ({ tone = "mute", children }) => <span className={`pill pill-${tone}`}>{children}</span>;
+const Delta = ({ v }) => (
+  <span className={v >= 0 ? "up" : "down"}>
+    {v >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}{pct(v)}
+  </span>
+);
+const Btn = ({ children, primary, icon: I, small }) => (
+  <button className={`btn ${primary ? "btn-p" : ""} ${small ? "btn-s" : ""}`}>{I && <I size={14} />}{children}</button>
+);
+
+/* ---------- the signature: bucket strategy bar ---------- */
+const BucketBar = ({ compact }) => (
+  <div className="bucket-wrap">
+    <div className="bucket-bar">
+      {BUCKETS.map((b) => (
+        <div key={b.name} className="bucket-seg" style={{ flex: b.actual, background: BUCKET[b.name] }}>
+          {!compact && <span>{b.name} {b.actual}%</span>}
+        </div>
+      ))}
+    </div>
+    <div className="bucket-bar bucket-target">
+      {BUCKETS.map((b) => (
+        <div key={b.name} style={{ flex: b.target, borderColor: BUCKET[b.name] }} />
+      ))}
+    </div>
+    {!compact && (
+      <div className="bucket-legend">
+        {BUCKETS.map((b) => {
+          const drift = +(b.actual - b.target).toFixed(1);
+          return (
+            <div key={b.name} className="bucket-item">
+              <div className="dot" style={{ background: BUCKET[b.name] }} />
+              <div>
+                <div className="bucket-name">{b.name} <span className="mute">target {b.target}%</span></div>
+                <div className="mute small">{b.desc}</div>
+              </div>
+              <Pill tone={Math.abs(drift) > 1.5 ? "amber" : "teal"}>{drift > 0 ? "+" : ""}{drift}% drift</Pill>
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </div>
+);
+
+/* ---------- screens ---------- */
+const Dashboard = ({ mobile }) => (
+  <>
+    <div className={`kpis ${mobile ? "kpis-m" : ""}`}>
+      <Card style={{ gridColumn: mobile ? "auto" : "span 2" }}>
+        <div className="mute">Consolidated net worth</div>
+        <div className="hero-num">₹51.4 L</div>
+        <div className="row gap"><Delta v={2.2} /><span className="mute">this month</span><span className="mute">·</span><span className="mute">XIRR 13.8% since inception</span></div>
+        <div style={{ height: 120, marginTop: 12 }}>
+          <ResponsiveContainer>
+            <AreaChart data={NET_WORTH_TREND}>
+              <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.teal} stopOpacity={0.25} /><stop offset="100%" stopColor={C.teal} stopOpacity={0} /></linearGradient></defs>
+              <Area dataKey="v" stroke={C.teal} fill="url(#g)" strokeWidth={2} />
+              <XAxis dataKey="m" tick={{ fontSize: 11, fill: C.mute }} axisLine={false} tickLine={false} />
+              <Tooltip formatter={(v) => [`₹${v} L`, "Net worth"]} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      <Card><div className="mute">Live bank balances</div><div className="big-num">₹517</div><div className="row gap small"><Wifi size={12} color={C.teal} /><span className="mute">4 of 5 accounts syncing</span></div></Card>
+      <Card><div className="mute">Idle funds flagged</div><div className="big-num" style={{ color: C.amber }}>₹310</div><div className="small mute">above 30-day float rule</div></Card>
+      <Card><div className="mute">Rent due this month</div><div className="big-num">₹49</div><div className="small"><span className="down">1 overdue</span> <span className="mute">· 2 received</span></div></Card>
+      <Card><div className="mute">Capital gains YTD</div><div className="big-num">₹160</div><div className="small mute">est. tax ₹21</div></Card>
+    </div>
+
+    <div className={mobile ? "" : "grid-2"}>
+      <Card title="Three-bucket strategy" action={<Btn small>Rebalance</Btn>}>
+        <BucketBar />
+      </Card>
+      <Card title="Allocation by asset class">
+        <div className="row" style={{ alignItems: "center" }}>
+          <div style={{ width: 160, height: 160 }}>
+            <ResponsiveContainer>
+              <PieChart><Pie data={ALLOC} dataKey="value" innerRadius={48} outerRadius={75} paddingAngle={2} stroke="none">
+                {ALLOC.map((a, i) => <Cell key={i} fill={BUCKET[a.bucket]} opacity={0.55 + (i % 3) * 0.15} />)}
+              </Pie><Tooltip formatter={(v) => `₹${v} L`} /></PieChart>
+            </ResponsiveContainer>
+          </div>
+          <table className="tbl tight">
+            <tbody>{ALLOC.map((a) => (
+              <tr key={a.name}><td><span className="dot sm" style={{ background: BUCKET[a.bucket] }} />{a.name}</td><td className="num">₹{a.value} L</td><td className="num mute">{(a.value / 51.4 * 100).toFixed(0)}%</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+
+    <div className={mobile ? "" : "grid-2"}>
+      <Card title="Net worth by entity">
+        <table className="tbl">
+          <thead><tr><th>Entity</th><th className="num">Net worth</th><th className="num">MoM</th><th className="num">XIRR</th></tr></thead>
+          <tbody>
+            <tr><td>Arjun Mehta</td><td className="num">₹22.6 L</td><td className="num"><Delta v={2.4} /></td><td className="num">14.1%</td></tr>
+            <tr><td>Mehta HUF</td><td className="num">₹19.3 L</td><td className="num"><Delta v={1.8} /></td><td className="num">13.2%</td></tr>
+            <tr><td>Spouse (Individual)</td><td className="num">₹9.5 L</td><td className="num"><Delta v={2.6} /></td><td className="num">13.9%</td></tr>
+          </tbody>
+        </table>
+      </Card>
+      <Card title="Needs attention">
+        {[
+          ["amber", "Saibaba Colony rent overdue 6 days — send reminder to R. Sundaram"],
+          ["amber", "₹310 idle across HDFC and ICICI for 34 days — deployment plan ready"],
+          ["red", "Anna Nagar lease ends Dec 2026 — renewal draft pending signature"],
+          ["teal", "GSTR-1 for Aug rent filed for both HUF and Spouse GSTINs"],
+          ["mute", "Varaha Angel Fund II drawdown 4/6 due 14 Oct — ₹200"],
+        ].map(([t, s], i) => (
+          <div key={i} className="attn"><Circle size={8} fill={C[t] || C.mute} color={C[t] || C.mute} /><span>{s}</span><ChevronRight size={14} className="mute" /></div>
+        ))}
+      </Card>
+    </div>
+  </>
+);
+
+const Investments = ({ mobile }) => {
+  const [tab, setTab] = useState("Holdings");
+  return (
+    <>
+      <div className="tabs">{["Holdings", "Capital gains", "Corporate actions", "Imports"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "Holdings" && (
+        <Card title="Holdings across entities" action={<div className="row gap"><Btn small icon={Filter}>Filter</Btn><Btn small icon={Upload}>Import CAS / contract note</Btn><Btn small primary icon={Plus}>Add transaction</Btn></div>}>
+          <div className="scroll">
+            <table className="tbl">
+              <thead><tr><th>Asset</th><th>Type</th><th>Entity</th><th>Bucket</th>{!mobile && <th className="num">Qty</th>}<th className="num">Cost (₹ K)</th><th className="num">Value (₹ K)</th><th className="num">Gain</th><th className="num">XIRR</th></tr></thead>
+              <tbody>{HOLDINGS.map((h) => (
+                <tr key={h.name}><td><b>{h.name}</b></td><td>{h.type}</td><td>{h.entity}</td><td><span className="dot sm" style={{ background: BUCKET[h.bucket] }} />{h.bucket}</td>{!mobile && <td className="num">{typeof h.qty === "number" ? h.qty.toLocaleString("en-IN") : h.qty}</td>}<td className="num">{h.cost.toFixed(1)}</td><td className="num">{h.value.toFixed(1)}</td><td className="num"><Delta v={(h.value / h.cost - 1) * 100} /></td><td className="num">{h.xirr}%</td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <div className="small mute" style={{ marginTop: 10 }}>Prices: NSE 15-min delayed · MF NAV from AMFI (daily 23:00 IST) · PMS/AIF marks from monthly statements</div>
+        </Card>
+      )}
+      {tab === "Capital gains" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="Capital gains summary (FIFO)" action={<Btn small icon={Download}>ITR schedule CG</Btn>}>
+            <table className="tbl">
+              <thead><tr><th>Year</th><th className="num">STCG (₹ K)</th><th className="num">LTCG (₹ K)</th><th className="num">Taxable (₹ K)</th><th className="num">Est. tax (₹ K)</th></tr></thead>
+              <tbody>{CAP_GAINS.map((g) => <tr key={g.fy}><td>{g.fy}</td><td className="num">{g.stcg}</td><td className="num">{g.ltcg}</td><td className="num">{g.taxable}</td><td className="num">{g.tax}</td></tr>)}</tbody>
+            </table>
+            <div className="small mute" style={{ marginTop: 10 }}>Grandfathering applied for pre-Feb 2018 equity. LTCG exemption ₹1.25 L used per entity. Rates as per Finance Act 2024.</div>
+          </Card>
+          <Card title="Tax-loss harvesting candidates">
+            {[["Orbital Logistics CCD", "-₹300", "Loss claim on wind-up"], ["Axis Small Cap (2 lots)", "-₹21", "Offset against STCG"], ["Bharti Hexacom (Aug lot)", "-₹600", "Wash-sale-free, no 30-day rule in India"]].map(([a, b, c]) => (
+              <div key={a} className="attn"><div><b>{a}</b><div className="small mute">{c}</div></div><span className="down num">{b}</span></div>
+            ))}
+          </Card>
+        </div>
+      )}
+      {tab === "Corporate actions" && (
+        <Card title="Auto-applied corporate actions">
+          <table className="tbl"><thead><tr><th>Date</th><th>Security</th><th>Action</th><th>Effect</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>28 Aug 2026</td><td>HDFC Bank</td><td>Bonus 1:1</td><td>Qty 2,100 → 4,200; cost split</td><td><Pill tone="teal">Applied</Pill></td></tr>
+              <tr><td>14 Aug 2026</td><td>TCS</td><td>Interim dividend ₹11</td><td>₹99 to Kotak ••7715</td><td><Pill tone="teal">Matched to bank</Pill></td></tr>
+              <tr><td>02 Aug 2026</td><td>ITC</td><td>Demerger (ITC Hotels)</td><td>Cost apportioned 93.6 / 6.4</td><td><Pill tone="amber">Review</Pill></td></tr>
+            </tbody></table>
+        </Card>
+      )}
+      {tab === "Imports" && (
+        <Card title="Import sources">
+          <div className={mobile ? "" : "grid-3"}>
+            {[["MF CAS (CAMS + KFintech)", "PDF / API refresh · last run 10 Sep", "teal"], ["Broker contract notes", "Zerodha, ICICI Direct · email forward", "teal"], ["PMS / AIF statements", "Monthly PDF, valuation marks", "amber"], ["NSDL / CDSL demat", "e-CAS reconcile · 1 mismatch", "amber"], ["Bank CSV / AA feed", "5 accounts · 4 live", "teal"], ["Tally export", "Ledgers for CA, quarterly", "mute"]].map(([a, b, t]) => (
+              <div key={a} className="src"><b>{a}</b><div className="small mute">{b}</div><Pill tone={t}>{t === "teal" ? "Healthy" : t === "amber" ? "Needs review" : "Manual"}</Pill></div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </>
+  );
+};
+
+const RealEstate = ({ mobile }) => {
+  const [tab, setTab] = useState("Properties");
+  return (
+    <>
+      <div className="tabs">{["Properties", "Rent ledger", "Taxes & GST", "Maintenance"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "Properties" && (
+        <>
+          <div className={`kpis ${mobile ? "kpis-m" : ""}`}>
+            <Card><div className="mute">Portfolio value</div><div className="big-num">₹11.6 L</div></Card>
+            <Card><div className="mute">Gross rent / month</div><div className="big-num">₹49</div></Card>
+            <Card><div className="mute">Blended yield</div><div className="big-num">5.1%</div></Card>
+            <Card><div className="mute">Occupancy</div><div className="big-num">3 / 3</div><div className="small mute">leased units</div></Card>
+          </div>
+          <Card title="Properties" action={<Btn small primary icon={Plus}>Add property</Btn>}>
+            {PROPERTIES.map((p) => (
+              <div key={p.name} className="prop">
+                <div className="prop-ic"><Building2 size={18} /></div>
+                <div style={{ flex: 1 }}>
+                  <b>{p.name}</b>
+                  <div className="small mute">{p.type} · {p.entity} · Tenant: {p.tenant} · Lease to {p.lease}</div>
+                </div>
+                {!mobile && <div className="num"><div className="mute small">Value</div>{inr(p.value)}</div>}
+                <div className="num"><div className="mute small">Rent</div>{p.rent ? `₹${p.rent.toLocaleString("en-IN")}` : "—"}</div>
+                <div className="num"><div className="mute small">Yield</div>{p.yield ? `${p.yield}%` : "—"}</div>
+                {p.gst ? <Pill tone="blue">GST 18%</Pill> : <Pill>No GST</Pill>}
+              </div>
+            ))}
+          </Card>
+        </>
+      )}
+      {tab === "Rent ledger" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="September 2026 rent" action={<Btn small icon={Download}>Rent receipts</Btn>}>
+            <table className="tbl"><thead><tr><th>Date</th><th>Property</th><th className="num">Rent</th><th className="num">GST</th><th className="num">TDS</th><th>Status</th></tr></thead>
+              <tbody>{RENT_LEDGER.map((r, i) => <tr key={i}><td>{r.d}</td><td>{r.prop}</td><td className="num">₹{r.amt.toLocaleString("en-IN")}</td><td className="num">{r.gst ? `₹${r.gst.toLocaleString("en-IN")}` : "—"}</td><td className="num">{r.tds ? `₹${r.tds.toLocaleString("en-IN")}` : "—"}</td><td><Pill tone={r.status.startsWith("Over") ? "red" : "teal"}>{r.status}</Pill></td></tr>)}</tbody></table>
+            <div className="small mute" style={{ marginTop: 10 }}>Rent receipts are auto-matched to bank credits by tenant name and amount. TDS under 194-I reconciles with Form 26AS.</div>
+          </Card>
+          <Card title="Rent vs. property costs (₹ K)">
+            <div style={{ height: 220 }}>
+              <ResponsiveContainer><BarChart data={RENT_VS_COST}><CartesianGrid vertical={false} stroke={C.line} /><XAxis dataKey="m" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip /><Legend /><Bar dataKey="rent" name="Rent" fill={C.teal} radius={[3, 3, 0, 0]} /><Bar dataKey="cost" name="Tax + maintenance" fill={C.amber} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+      )}
+      {tab === "Taxes & GST" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="GST on rent — per GSTIN">
+            <table className="tbl"><thead><tr><th>GSTIN holder</th><th>SAC</th><th className="num">Taxable (Aug)</th><th className="num">GST 18%</th><th>GSTR-1</th><th>GSTR-3B</th></tr></thead>
+              <tbody>
+                <tr><td>Mehta HUF<div className="small mute">33AAxxx1234H1Z5</div></td><td>997212</td><td className="num">₹2,850</td><td className="num">₹513</td><td><Pill tone="teal">Filed 10 Sep</Pill></td><td><Pill tone="amber">Due 20 Sep</Pill></td></tr>
+                <tr><td>Spouse (Individual)<div className="small mute">33ABxxx5678K1Z2</div></td><td>997212</td><td className="num">₹1,650</td><td className="num">₹297</td><td><Pill tone="teal">Filed 10 Sep</Pill></td><td><Pill tone="amber">Due 20 Sep</Pill></td></tr>
+              </tbody></table>
+            <div className="small mute" style={{ marginTop: 10 }}>Residential rent to individuals is exempt; commercial rent at 18% under SAC 997212. Threshold tracking per GSTIN (₹20 L).</div>
+          </Card>
+          <Card title="Property tax calendar">
+            {[["Coimbatore Corporation — Race Course Rd", "₹482", "Paid 09 Sep", "teal"], ["Coimbatore Corporation — Saibaba Colony", "₹114", "Due 30 Sep", "amber"], ["Greater Chennai Corp — Anna Nagar", "₹360", "Due 15 Oct", "amber"], ["Ooty Municipality — farmland", "₹32", "Paid Apr", "teal"]].map(([a, b, c, t]) => (
+              <div key={a} className="attn"><div><b>{a}</b><div className="small mute">Half-yearly</div></div><span className="num">{b}</span><Pill tone={t}>{c}</Pill></div>
+            ))}
+          </Card>
+        </div>
+      )}
+      {tab === "Maintenance" && (
+        <Card title="Maintenance & repairs log" action={<Btn small primary icon={Plus}>Log expense</Btn>}>
+          <table className="tbl"><thead><tr><th>Date</th><th>Property</th><th>Item</th><th>Vendor</th><th className="num">Amount</th><th>Receipt</th></tr></thead>
+            <tbody>{MAINTENANCE.map((m, i) => <tr key={i}><td>{m.d}</td><td>{m.prop}</td><td>{m.item}</td><td>{m.vendor}</td><td className="num">₹{m.amt.toLocaleString("en-IN")}</td><td><FileText size={14} className="mute" /></td></tr>)}</tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Capital improvements are tagged separately and added to cost of acquisition for future capital gains.</div>
+        </Card>
+      )}
+    </>
+  );
+};
+
+const Startups = ({ mobile }) => (
+  <>
+    <div className={`kpis ${mobile ? "kpis-m" : ""}`}>
+      <Card><div className="mute">Total invested</div><div className="big-num">₹2.40 L</div><div className="small mute">5 positions, 4 active</div></Card>
+      <Card><div className="mute">Current mark</div><div className="big-num">₹3.32 L</div><div className="small"><Delta v={38.3} /></div></Card>
+      <Card><div className="mute">Unfunded commitments</div><div className="big-num" style={{ color: C.amber }}>₹400</div><div className="small mute">Varaha Fund II, 2 drawdowns</div></Card>
+      <Card><div className="mute">Realised</div><div className="big-num">₹0</div><div className="small mute">1 secondary offer open</div></Card>
+    </div>
+    <Card title="Private investments" action={<div className="row gap"><Btn small icon={Upload}>Upload SHA / term sheet</Btn><Btn small primary icon={Plus}>Add investment</Btn></div>}>
+      <div className="scroll">
+        <table className="tbl"><thead><tr><th>Company</th><th>Stage</th><th>Instrument</th><th className="num">Invested</th><th className="num">Mark</th><th className="num">MOIC</th>{!mobile && <th>Holding</th>}<th>Next event</th><th>Status</th></tr></thead>
+          <tbody>{STARTUPS.map((s) => (
+            <tr key={s.name}><td><b>{s.name}</b><div className="small mute">{s.date}</div></td><td>{s.stage}</td><td>{s.inst}</td><td className="num">{inr(s.invested)}</td><td className="num">{inr(s.mark)}</td><td className="num">{(s.mark / s.invested).toFixed(2)}x</td>{!mobile && <td>{s.held}</td>}<td className="small">{s.next}</td><td><Pill tone={s.status === "Active" ? "teal" : s.status === "Written off" ? "red" : "amber"}>{s.status}</Pill></td></tr>
+          ))}</tbody></table>
+      </div>
+    </Card>
+    <div className={mobile ? "" : "grid-2"}>
+      <Card title="Cropsense AgriTech — round history">
+        <table className="tbl tight"><thead><tr><th>Round</th><th className="num">Pre-money</th><th className="num">Your stake</th><th className="num">Mark</th></tr></thead>
+          <tbody>
+            <tr><td>Seed (Jun 2023)</td><td className="num">₹18 L</td><td className="num">2.4%</td><td className="num">₹500</td></tr>
+            <tr><td>Series A (Feb 2025)</td><td className="num">₹62 L</td><td className="num">1.8% (diluted)</td><td className="num">₹1.21 L</td></tr>
+          </tbody></table>
+        <div className="small mute" style={{ marginTop: 10 }}>Marks use last priced round. Sec 54GB / 80-IAC eligibility and 3-year holding for LTCG tracked per lot.</div>
+      </Card>
+      <Card title="Exit scenario — Threadline secondary">
+        <table className="tbl tight"><tbody>
+          <tr><td>Offer</td><td className="num">₹42 @ ₹13/share</td></tr>
+          <tr><td>Cost (Nov 2022)</td><td className="num">₹15</td></tr>
+          <tr><td>Gain (LTCG, unlisted 12.5%)</td><td className="num up">₹27 → tax ₹338</td></tr>
+          <tr><td>Effect on Growth bucket</td><td className="num">−0.05% (immaterial)</td></tr>
+        </tbody></table>
+        <div className="row gap" style={{ marginTop: 12 }}><Btn small primary>Model full exit</Btn><Btn small>Partial 50%</Btn></div>
+      </Card>
+    </div>
+  </>
+);
+
+
+const ASSET_CLASSES = [
+  { c: "Equity", t: 60, band: [50, 70], head: 55.4, lt: 58.9 },
+  { c: "Debt", t: 25, band: [20, 35], head: 20.1, lt: 22.6 },
+  { c: "Gold", t: 5, band: [3, 10], head: 2.7, lt: 2.7 },
+  { c: "Real estate", t: 5, band: [0, 25], head: 22.6, lt: 22.9 },
+  { c: "Cash", t: 3, band: [2, 8], head: 6.2, lt: 5.9 },
+  { c: "Global", t: 2, band: [0, 10], head: 4.1, lt: 5.6 },
+];
+const AssetClassLens = () => (
+  <Card title="Asset-class lens — Moderate 60/30/10 model, look-through" action={<div className="row gap"><Btn small>Apply model</Btn><Btn small>Edit bands</Btn></div>}>
+    <table className="tbl tight">
+      <thead><tr><th>Class</th><th className="num">Target</th><th className="num">Band</th><th className="num">Headline</th><th className="num">Look-through</th><th>Status</th></tr></thead>
+      <tbody>{ASSET_CLASSES.map((a) => {
+        const out = a.lt < a.band[0] || a.lt > a.band[1];
+        return (<tr key={a.c}><td><b>{a.c}</b></td><td className="num">{a.t}%</td><td className="num mute">{a.band[0]}–{a.band[1]}%</td><td className="num">{a.head}%</td><td className="num">{a.lt}%</td><td>{out ? <Pill tone="amber">band breached</Pill> : <Pill tone="teal">in band</Pill>}</td></tr>);
+      })}</tbody>
+    </table>
+    <div className="small mute" style={{ marginTop: 8 }}>Look-through decomposes the balanced-advantage fund (62/38), the international FoF and the REIT into their underlying classes. Real estate is over target because two properties are held for income by design — edit the band rather than the target. Satellite holdings: 4.8% of portfolio. Policy: strategic, annual review due 1 Apr 2027.</div>
+  </Card>
+);
+
+const Goals = ({ mobile }) => (
+  <>
+    <div className={mobile ? "" : "grid-2"}>
+      <Card title="Strategy: how the three buckets are funded" action={<Btn small>Edit targets</Btn>}>
+        <BucketBar />
+      </Card>
+      <AssetClassLens />
+    </div>
+    <div className={mobile ? "" : "grid-2"}>
+      <Card title="Goals" action={<Btn small primary icon={Plus}>Add goal</Btn>}>
+        {GOALS.map((g) => (
+          <div key={g.name} className="goal">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div><b>{g.name}</b><div className="small mute">{g.year} · {g.entity} · needs {inr(g.need)}</div></div>
+              <div className="row gap"><span className="dot sm" style={{ background: BUCKET[g.bucket] }} /><span className="small">{g.bucket}</span></div>
+            </div>
+            <div className="prog"><div style={{ width: `${g.funded}%`, background: BUCKET[g.bucket] }} /></div>
+            <div className="small mute">{g.funded}% funded · {g.funded < 100 ? `on track at 11% p.a.` : "fully funded"}</div>
+          </div>
+        ))}
+      </Card>
+      <Card title="Rebalancing tasks" action={<Pill tone="amber">3 open</Pill>}>
+        <div className="small mute" style={{ marginBottom: 10 }}>Execution happens on MF Central, broker or bank; mark each task done and the platform reconciles on the next import.</div>
+        {REBALANCE_TASKS.map((t, i) => (
+          <div key={i} className="task">
+            {t.done ? <CheckCircle2 size={18} color={C.teal} /> : <Circle size={18} color={C.line} />}
+            <div style={{ flex: 1 }}><div style={{ textDecoration: t.done ? "line-through" : "none" }}>{t.task}</div><div className="small mute">{t.why} · {t.entity} · due {t.due}</div></div>
+          </div>
+        ))}
+      </Card>
+    </div>
+    <Card title="Glide path — Growth bucket target by year">
+      <div style={{ height: 180 }}>
+        <ResponsiveContainer><LineChart data={[{ y: "2026", t: 60, a: 63 }, { y: "2028", t: 58 }, { y: "2030", t: 55 }, { y: "2032", t: 50 }, { y: "2034", t: 45 }, { y: "2036", t: 40 }]}><CartesianGrid vertical={false} stroke={C.line} /><XAxis dataKey="y" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis unit="%" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} domain={[30, 70]} /><Tooltip /><Line dataKey="t" name="Target" stroke={C.violet} strokeWidth={2} dot /><Line dataKey="a" name="Actual" stroke={C.amber} strokeWidth={2} dot /></LineChart></ResponsiveContainer>
+      </div>
+      <div className="small mute">Growth exposure steps down as the retirement income floor approaches; Income bucket absorbs the difference.</div>
+    </Card>
+  </>
+);
+
+const Banking = ({ mobile }) => (
+  <>
+    <div className={mobile ? "" : "grid-2"}>
+      <Card title="Accounts" action={<div className="row gap"><Btn small icon={RefreshCw}>Sync now</Btn><Btn small icon={Upload}>Import CSV</Btn></div>}>
+        {BANK_ACCTS.map((a) => (
+          <div key={a.acct} className="acct">
+            <div className="prop-ic"><Landmark size={16} /></div>
+            <div style={{ flex: 1 }}><b>{a.bank} {a.acct}</b><div className="small mute">{a.type} · {a.entity}</div></div>
+            <div className="num" style={{ color: a.bal < 0 ? C.red : C.ink }}>{a.bal < 0 ? "−" : ""}₹{Math.abs(a.bal).toLocaleString("en-IN")}</div>
+            <div className="small" style={{ width: 90, textAlign: "right" }}>{a.live ? <span className="up"><Wifi size={11} /> {a.synced}</span> : <span className="mute">{a.synced}</span>}</div>
+          </div>
+        ))}
+        <div className="small mute" style={{ marginTop: 10 }}>Live feeds via RBI Account Aggregator consent (Finvu / Onemoney). Consent renews every 12 months. CSV import remains the fallback for any bank.</div>
+      </Card>
+      <Card title="Cash flow — last 30 days">
+        <div className="row gap" style={{ marginBottom: 10 }}>
+          <div><div className="mute small">Inflows</div><div className="big-num up">₹124</div></div>
+          <div><div className="mute small">Outflows</div><div className="big-num down">₹79</div></div>
+          <div><div className="mute small">Net</div><div className="big-num">₹45</div></div>
+        </div>
+        <div style={{ height: 150 }}>
+          <ResponsiveContainer><BarChart data={[{ c: "Rent", v: 4.92 }, { c: "Dividend", v: 1.8 }, { c: "Interest", v: 2.1 }, { c: "Salary/fees", v: 3.6 }, { c: "Household", v: -2.4 }, { c: "SIP/invest", v: -3.5 }, { c: "Tax", v: -1.2 }, { c: "Property", v: -0.8 }]}><CartesianGrid vertical={false} stroke={C.line} /><XAxis dataKey="c" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip /><Bar dataKey="v" radius={[3, 3, 0, 0]}>{[1, 1, 1, 1, 0, 0, 0, 0].map((p, i) => <Cell key={i} fill={p ? C.teal : C.red} />)}</Bar></BarChart></ResponsiveContainer>
+        </div>
+      </Card>
+    </div>
+    <Card title="Transactions" action={<div className="row gap"><div className="search"><Search size={13} /><span className="mute">Search or filter</span></div><Btn small>Rules</Btn></div>}>
+      <table className="tbl"><thead><tr><th>Date</th><th>Description</th><th>Category</th>{!mobile && <th>Account</th>}<th className="num">Amount</th></tr></thead>
+        <tbody>{TXNS.map((t, i) => <tr key={i}><td>{t.d}</td><td>{t.desc}</td><td><Pill tone={t.amt > 0 ? "teal" : "mute"}>{t.cat}</Pill></td>{!mobile && <td className="mute">{t.acct}</td>}<td className={`num ${t.amt > 0 ? "up" : ""}`}>{t.amt > 0 ? "+" : "−"}₹{Math.abs(t.amt).toLocaleString("en-IN")}</td></tr>)}</tbody></table>
+      <div className="small mute" style={{ marginTop: 10 }}>Auto-categorised by rules; rent and dividend credits are linked to the property or holding that produced them.</div>
+    </Card>
+  </>
+);
+
+const WorkingCapital = ({ mobile }) => (
+  <>
+    <div className={`kpis ${mobile ? "kpis-m" : ""}`}>
+      <Card><div className="mute">Cash across accounts</div><div className="big-num">₹536</div></Card>
+      <Card><div className="mute">Required float (60 days)</div><div className="big-num">₹226</div><div className="small mute">from recurring outflows + committed</div></Card>
+      <Card><div className="mute">Deployable excess</div><div className="big-num" style={{ color: C.teal }}>₹310</div></Card>
+      <Card><div className="mute">Drag from idle cash</div><div className="big-num" style={{ color: C.red }}>₹14 / yr</div><div className="small mute">vs. arbitrage after tax</div></Card>
+    </div>
+    <div className={mobile ? "" : "grid-2"}>
+      <Card title="Upcoming committed outflows (next 90 days)">
+        {[["14 Oct", "Varaha Fund II drawdown", "₹200"], ["15 Sep", "Advance tax Q2 (all entities)", "₹94"], ["20 Sep", "GSTR-3B liability", "₹800"], ["01 Oct", "School fees, term 2", "₹32"], ["Monthly", "Household + SIPs", "₹59"]].map(([d, w, a]) => (
+          <div key={w} className="attn"><span className="mute" style={{ width: 60 }}>{d}</span><span style={{ flex: 1 }}>{w}</span><span className="num">{a}</span></div>
+        ))}
+      </Card>
+      <Card title="Deployment plan for ₹310" action={<Btn small primary>Create tasks</Btn>}>
+        <div className="small mute" style={{ marginBottom: 8 }}>Ladder matches each rupee to when it is needed, then picks the most tax-efficient instrument for that horizon and the entity's slab.</div>
+        {[["Overnight fund", "₹40", "buffer to 7 days", C.blue], ["Liquid fund (HUF, 30% slab)", "₹70", "advance tax on 15 Dec", C.blue], ["Arbitrage fund (Arjun)", "₹140", "6–12 months, equity taxation", C.teal], ["91-day T-bill", "₹60", "Varaha drawdown 14 Oct", C.amber]].map(([a, b, c, col]) => (
+          <div key={a} className="attn"><span className="dot" style={{ background: col }} /><div style={{ flex: 1 }}><b>{a}</b><div className="small mute">{c}</div></div><span className="num">{b}</span></div>
+        ))}
+      </Card>
+    </div>
+    <Card title="Instrument ladder — yield vs. post-tax yield">
+      <div className="scroll">
+        <table className="tbl"><thead><tr><th>Instrument</th><th>Horizon</th><th className="num">Deployed</th><th className="num">Gross yield</th><th>Tax treatment</th><th className="num">Post-tax (30% slab)</th><th>Weight</th></tr></thead>
+          <tbody>{WC_LADDER.map((w) => (
+            <tr key={w.inst}><td><b>{w.inst}</b></td><td>{w.horizon}</td><td className="num">{inr(w.amt)}</td><td className="num">{w.yld}%</td><td>{w.tax}</td><td className="num up">{w.eff}%</td><td><div className="prog" style={{ margin: 0, width: 90 }}><div style={{ width: `${w.amt / 136000 * 100}%`, background: w.color }} /></div></td></tr>
+          ))}</tbody></table>
+      </div>
+      <div className="small mute" style={{ marginTop: 10 }}>Rules: hold ≥ 60 days of outflows in overnight/liquid; anything idle in savings for 30+ days is flagged; arbitrage preferred for 12-month-plus money in the 30% slab; T-bills for dated commitments.</div>
+    </Card>
+  </>
+);
+
+const Reports = ({ mobile }) => {
+  const [r, setR] = useState(0);
+  const list = [
+    { n: "Consolidated net worth statement", d: "All entities, by asset class and bucket, with MoM change" },
+    { n: "Capital gains — ITR Schedule CG", d: "FIFO lots, STCG/LTCG split, grandfathering, per entity" },
+    { n: "Rental income & GST register", d: "Per property, per GSTIN, with TDS reconciliation" },
+    { n: "XIRR by entity and asset class", d: "Since inception, 1Y, 3Y, 5Y vs. Nifty 50 / CRISIL blends" },
+    { n: "Bucket drift & rebalancing history", d: "Target vs. actual monthly, tasks executed" },
+    { n: "Working capital utilisation", d: "Idle cash days, drag, deployment yield" },
+    { n: "Private investments register", d: "Rounds, marks, MOIC, unfunded commitments" },
+    { n: "Cash flow statement", d: "Inflows/outflows by category, per bank, per entity" },
+  ];
+  return (
+    <div className={mobile ? "" : "grid-rep"}>
+      <Card title="Reports">
+        {list.map((x, i) => <div key={x.n} className={`rep ${i === r ? "on" : ""}`} onClick={() => setR(i)}><b>{x.n}</b><div className="small mute">{x.d}</div></div>)}
+      </Card>
+      <Card title={list[r].n} action={<div className="row gap"><Btn small icon={Download}>PDF</Btn><Btn small icon={Download}>Excel</Btn><Btn small>Schedule</Btn></div>}>
+        <div className="row gap small mute" style={{ marginBottom: 12 }}><span>Entity: All</span><span>·</span><span>Period: FY 2026-27 to date</span><span>·</span><span>Generated 11 Sep 2026, 10:42 IST</span></div>
+        {r === 0 && (
+          <table className="tbl"><thead><tr><th>Asset class</th><th className="num">Arjun</th><th className="num">HUF</th><th className="num">Spouse</th><th className="num">Total</th><th className="num">MoM</th></tr></thead>
+            <tbody>
+              {[["Listed equity", 6.8, 4.1, 3.3, 14.2, 3.1], ["Mutual funds", 3.9, 4.6, 1.3, 9.8, 2.4], ["PMS / AIF", 3, 2.1, 1, 6.1, 1.2], ["Startups & angel funds", 1.1, 1.3, 0, 2.4, 0], ["Real estate", 1.9, 6.1, 3.6, 11.6, 0.4], ["Bonds / FDs", 1.6, 1, 1.5, 4.1, 0.3], ["Liquid / cash", 1.4, 1.1, 0.7, 3.2, 8.9]].map((row) => (
+                <tr key={row[0]}><td>{row[0]}</td>{row.slice(1, 5).map((v, i) => <td key={i} className="num">₹{v.toFixed(1)} L</td>)}<td className="num"><Delta v={row[5]} /></td></tr>
+              ))}
+              <tr className="total"><td>Net worth</td><td className="num">₹22.6 L</td><td className="num">₹19.3 L</td><td className="num">₹9.5 L</td><td className="num">₹51.4 L</td><td className="num"><Delta v={2.2} /></td></tr>
+            </tbody></table>
+        )}
+        {r === 1 && (
+          <table className="tbl"><thead><tr><th>Security</th><th>Entity</th><th>Bought</th><th>Sold</th><th className="num">Cost</th><th className="num">Sale</th><th>Type</th><th className="num">Gain</th></tr></thead>
+            <tbody>
+              <tr><td>Infosys (300)</td><td>Arjun</td><td>12 Feb 2022</td><td>04 Jul 2026</td><td className="num">₹51</td><td className="num">₹62</td><td><Pill tone="teal">LTCG</Pill></td><td className="num up">₹11</td></tr>
+              <tr><td>Axis Small Cap (4,120 u)</td><td>HUF</td><td>02 Nov 2025</td><td>18 Aug 2026</td><td className="num">₹48</td><td className="num">₹46</td><td><Pill tone="amber">STCG</Pill></td><td className="num down">−₹200</td></tr>
+              <tr><td>SBI 7.72% bond (50)</td><td>Spouse</td><td>09 Jan 2024</td><td>22 Aug 2026</td><td className="num">₹500</td><td className="num">₹514</td><td><Pill tone="teal">LTCG (listed debt)</Pill></td><td className="num up">₹14</td></tr>
+              <tr><td>Threadline (secondary)</td><td>Arjun</td><td>14 Nov 2022</td><td>pending</td><td className="num">₹15</td><td className="num">₹42</td><td><Pill tone="teal">LTCG (unlisted)</Pill></td><td className="num up">₹27</td></tr>
+            </tbody></table>
+        )}
+        {r === 2 && (
+          <table className="tbl"><thead><tr><th>Property</th><th>GSTIN</th><th className="num">Rent (Apr–Aug)</th><th className="num">GST collected</th><th className="num">TDS</th><th className="num">Net received</th></tr></thead>
+            <tbody>
+              <tr><td>Race Course Road office</td><td>HUF</td><td className="num">₹142</td><td className="num">₹26</td><td className="num">₹14</td><td className="num">₹154</td></tr>
+              <tr><td>Anna Nagar retail unit</td><td>Spouse</td><td className="num">₹82</td><td className="num">₹15</td><td className="num">₹830</td><td className="num">₹89</td></tr>
+              <tr><td>Saibaba Colony apartment</td><td>—</td><td className="num">₹21</td><td className="num">—</td><td className="num">—</td><td className="num">₹21</td></tr>
+              <tr className="total"><td>Total</td><td></td><td className="num">₹246</td><td className="num">₹41</td><td className="num">₹23</td><td className="num">₹264</td></tr>
+            </tbody></table>
+        )}
+        {r === 3 && (
+          <table className="tbl"><thead><tr><th>Entity / class</th><th className="num">1Y</th><th className="num">3Y</th><th className="num">5Y</th><th className="num">Since inception</th><th className="num">vs. benchmark</th></tr></thead>
+            <tbody>
+              <tr><td>Arjun — listed equity</td><td className="num">16.2%</td><td className="num">15.1%</td><td className="num">14.3%</td><td className="num">14.1%</td><td className="num up">+1.9% vs Nifty 50</td></tr>
+              <tr><td>HUF — mutual funds</td><td className="num">19.4%</td><td className="num">17.2%</td><td className="num">15.8%</td><td className="num">16%</td><td className="num up">+2.4% vs Nifty 500</td></tr>
+              <tr><td>All — PMS / AIF</td><td className="num">10.8%</td><td className="num">11.9%</td><td className="num">—</td><td className="num">11%</td><td className="num down">−1.3% vs 60/40 blend</td></tr>
+              <tr><td>All — real estate (incl. rent)</td><td className="num">9.1%</td><td className="num">8.4%</td><td className="num">8.9%</td><td className="num">8.6%</td><td className="num mute">no benchmark</td></tr>
+            </tbody></table>
+        )}
+        {r > 3 && <div className="empty"><FileText size={28} className="mute" /><div>Sample layout follows the same table + export pattern.</div><div className="small mute">Tell me which columns matter and I will fill this one in.</div></div>}
+      </Card>
+    </div>
+  );
+};
+
+const Documents = () => (
+  <Card title="Document repository" action={<Btn small primary icon={Upload}>Upload</Btn>}>
+    <div className="grid-3">
+      {[["Property deeds & agreements", 14], ["Tax filings (ITR, GST)", 31], ["PMS / AIF statements", 46], ["Startup SHAs & term sheets", 9], ["Bank statements", 62], ["Insurance policies", 7], ["Wills & nominations", 3], ["CA correspondence", 18]].map(([n, c]) => (
+        <div key={n} className="src"><FolderOpen size={16} color={C.amber} /><b>{n}</b><div className="small mute">{c} files · linked to entity & asset</div></div>
+      ))}
+    </div>
+  </Card>
+);
+
+const Flow = () => (
+  <Card title="Product map — modules and the flow between them">
+    <div className="flow">
+      {[
+        ["Onboard", "Create entities (Individual, HUF, spouse) → GSTIN/PAN → risk questionnaire → build and sign the Investment Policy (allocation, bands, limits, guardrails) → connect banks (AA consent) → import CAS & contract notes"],
+        ["Ingest", "Daily: AMFI NAV, NSE prices, AA bank feed, email-forwarded contract notes · Monthly: PMS/AIF marks · Manual: startup rounds, property events · Continuous: research feeds (email, WhatsApp, RSS, uploads) → recommendations → policy-fit → proposals"],
+        ["Reconcile & post", "Bank credits ↔ rent / dividend / coupon · Demat ↔ holdings · TDS ↔ 26AS · Corporate actions applied, exceptions surfaced · every matched event auto-posts a balanced journal into the entity's books"],
+        ["Analyse", "Net worth, XIRR, allocation, bucket drift, idle cash, tax position, upcoming commitments"],
+        ["Plan", "What-if scenarios (tax), and the rebalancing engine: calendar / band / milestone / funding-need triggers → timed, tax-aware moves that settle before each dated need; compare, review, approve"],
+        ["Act", "Approved plan actions, rebalancing tasks, deployment plans, rent reminders, bills and taxes become intents — drafted by the assistant or an operator, policy-checked, approved by a human with step-up auth, executed by the executor through broker/bank connectors (or assisted where no API exists), reconciled on import, posted to the books"],
+        ["Report", "Statements, ITR schedules, GST register, cash flow, private register — PDF/Excel, scheduled to family & CA"],
+      ].map(([s, d], i) => (
+        <div key={s} className="step"><div className="step-n">{i + 1}</div><div><b>{s}</b><div className="small mute">{d}</div></div></div>
+      ))}
+    </div>
+  </Card>
+);
+
+
+/* ---------- planning & taxation ---------- */
+const SCENARIOS = [
+  { id: 0, name: "Baseline (do nothing)", status: "Baseline", tax: 3410, saving: 0, cash: 4620, drift: 3.3, actions: 0, done: 0, owner: "System" },
+  { id: 1, name: "Sell Anna Nagar + 54EC bonds", status: "In review", tax: 2680, saving: 730, cash: 36020, drift: 1.1, actions: 4, done: 0, owner: "Arjun" },
+  { id: 2, name: "Harvest losses, split gains across FYs", status: "Approved", tax: 2790, saving: 620, cash: 4620, drift: 3.3, actions: 4, done: 1, owner: "Arjun" },
+  { id: 3, name: "Route new SIPs via HUF, HUF to old regime", status: "Draft", tax: 3120, saving: 290, cash: 4620, drift: 3.3, actions: 3, done: 0, owner: "Priya" },
+];
+const ACTIONS = {
+  1: [
+    ["Do not renew Anna Nagar lease; vacate", "Spouse · 30 Nov 2026", "—", "planned", "Rent −₹1,650/mo from Dec"],
+    ["Sell Anna Nagar retail unit @ ₹37,000", "Spouse · 15 Jan 2027", "₹37,000", "planned", "LTCG ₹8,400 (12.5% or indexed 20%, lower)"],
+    ["Invest gain in REC 54EC bonds, 5-yr lock", "Spouse · by 31 Mar 2027", "₹8,500", "planned", "Tax ₹1,050 → ₹0"],
+    ["Buy listed PSU bonds (Income bucket)", "Spouse · 10 Apr 2027", "₹24,000", "planned", "Income +₹1,780/yr"],
+  ],
+  2: [
+    ["Redeem Axis Small Cap (loss lot)", "HUF · 18 Aug 2026", "₹4,600", "done", "STCL ₹200 set off"],
+    ["Sell 4 TCS within LTCG exemption", "Spouse · 20 Mar 2027", "₹15,155", "planned", "LTCG ₹1,250 → tax ₹0"],
+    ["Re-buy TCS next day (cost reset)", "Spouse · 21 Mar 2027", "₹15,155", "planned", "New lot short-term until Mar 2028"],
+    ["Sell 5 TCS in FY 2027-28", "Spouse · 5 Apr 2027", "₹18,944", "planned", "Uses next FY exemption"],
+  ],
+  3: [
+    ["Redirect ₹2,000 SIP mandate to HUF folio", "Arjun → HUF · 10 Oct 2026", "₹2,000/mo", "planned", "Clubbing risk — see warning"],
+    ["HUF opts for old regime", "HUF · FY 2026-27", "—", "planned", "Saves ₹290 with 80C"],
+    ["PPF contribution for 80C", "HUF · 25 Mar 2027", "₹1,500", "planned", "80C room used"],
+  ],
+};
+const WARNINGS = {
+  1: ["54EC purchase must complete within 6 months of transfer (by 15 Jul 2027).", "Rental income drops by ₹1,650/month from Dec 2026; Income bucket dips until bonds settle."],
+  2: ["TCS re-buy on 21 Mar 2027 resets the holding period; new lot is short-term until Mar 2028."],
+  3: ["Section 64(2): income from assets gifted by the karta to the HUF is clubbed in the karta's hands. Fund HUF SIPs from HUF rental surplus instead."],
+};
+const TAX_BY_FY = [
+  { fy: "FY 26-27", Baseline: 2090, "Sell Anna Nagar": 2090, "Harvest & split": 1840, "SIPs via HUF": 1980 },
+  { fy: "FY 27-28", Baseline: 1320, "Sell Anna Nagar": 590, "Harvest & split": 950, "SIPs via HUF": 1140 },
+];
+const SUGGESTIONS = [
+  ["Mehta HUF: old regime saves ₹290 this FY", "Rental income with 30% standard deduction plus ₹1,500 of unused 80C room", "₹290", "regime"],
+  ["Hold SBI bond lot until 9 Jan 2027 before selling", "10 units sold before then are taxed at slab (30%) instead of 12.5%", "₹245", "timing"],
+  ["Book ₹1,250 LTCG in TCS before 31 Mar", "Spouse has used none of the equity LTCG exemption; TCS lot is long-term", "₹156", "exemption"],
+  ["Advance tax Q2 short by ₹1,100", "Projected ₹3,410 vs ₹1,200 paid; 234C interest accrues at 1%/month", "₹33", "advance tax"],
+  ["Book ₹150 more LTCG in HDFC Bank", "Arjun has ₹150 headroom left in this year's exemption", "₹19", "exemption"],
+];
+const TAX_POSITION = [
+  ["Arjun Mehta", "New", "₹9,250", "₹1,100", "₹0", "₹1,320", "₹520", "₹800"],
+  ["Mehta HUF", "New → Old?", "₹6,840", "−₹200", "₹1,500", "₹1,240", "₹400", "₹840"],
+  ["Spouse (Individual)", "New", "₹4,120", "₹1,400", "₹0", "₹850", "₹280", "₹570"],
+];
+
+const Planning = ({ mobile }) => {
+  const [tab, setTab] = useState("Scenarios");
+  const [sel, setSel] = useState(1);
+  const sc = SCENARIOS[sel];
+  const tone = { Baseline: "mute", Draft: "mute", "In review": "amber", Approved: "teal", Executing: "blue", Completed: "teal" };
+  return (
+    <>
+      <div className="tabs">{["Scenarios", "Compare", "Tax position", "Optimiser", "Execution"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+
+      {tab === "Scenarios" && (
+        <div className={mobile ? "" : "grid-rep"}>
+          <Card title="Scenarios" action={<Btn small primary icon={Plus}>New scenario</Btn>}>
+            {SCENARIOS.map((x) => (
+              <div key={x.id} className={`rep ${x.id === sel ? "on" : ""}`} onClick={() => setSel(x.id)}>
+                <div className="row" style={{ justifyContent: "space-between" }}><b>{x.name}</b><Pill tone={tone[x.status]}>{x.status}</Pill></div>
+                <div className="small mute">{x.id === 0 ? "Auto-maintained from current data" : `${x.actions} actions · ${x.owner} · saves ${inr(x.saving)} vs baseline`}</div>
+              </div>
+            ))}
+            <div className="small mute" style={{ marginTop: 10 }}>Scenarios are versioned. Clone one to try a variation; approve one to turn its actions into tasks.</div>
+          </Card>
+          <Card title={sc.name} action={<div className="row gap"><Btn small icon={GitBranch}>Clone</Btn><Btn small icon={Play}>Re-simulate</Btn>{sc.status === "In review" && <Btn small primary>Approve</Btn>}{sc.status === "Draft" && <Btn small primary>Send for review</Btn>}</div>}>
+            <div className={`kpis ${mobile ? "kpis-m" : ""}`} style={{ gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4,1fr)", marginBottom: 14 }}>
+              <div className="src"><div className="mute small">Tax over 2 FYs</div><div className="big-num">{inr(sc.tax)}</div><div className="small">{sc.saving ? <span className="up">−{inr(sc.saving)} vs baseline</span> : <span className="mute">baseline</span>}</div></div>
+              <div className="src"><div className="mute small">Post-tax cash freed</div><div className="big-num">{inr(sc.cash)}</div></div>
+              <div className="src"><div className="mute small">Max bucket drift after</div><div className="big-num" style={{ color: sc.drift > 1.5 ? C.amber : C.teal }}>{sc.drift} pp</div></div>
+              <div className="src"><div className="mute small">Goal impact</div><div className="big-num">{sel === 1 ? "+7 pp" : "0"}</div><div className="small mute">{sel === 1 ? "Retirement income floor" : "no change"}</div></div>
+            </div>
+            {sel === 0 ? (
+              <div className="empty"><Calculator size={28} className="mute" /><div>The baseline has no actions.</div><div className="small mute">It projects tax, cash and allocation from current holdings, leases and commitments. Every scenario is measured against it.</div></div>
+            ) : (
+              <>
+                <table className="tbl"><thead><tr><th>If…</th><th>Who · when</th><th className="num">Amount</th><th>Then…</th><th>Status</th></tr></thead>
+                  <tbody>{ACTIONS[sel].map((a, i) => <tr key={i}><td><b>{a[0]}</b></td><td className="small mute">{a[1]}</td><td className="num">{a[2]}</td><td className="small">{a[4]}</td><td><Pill tone={a[3] === "done" ? "teal" : "mute"}>{a[3]}</Pill></td></tr>)}</tbody></table>
+                <div className="row gap" style={{ marginTop: 10 }}><Btn small icon={Plus}>Add action</Btn><span className="small mute">Sell, buy, switch, defer to next FY, harvest loss, book gain within exemption, transfer between entities, change regime, sell property, 54EC / 54F, NPS / PPF, donate, custom.</span></div>
+                {WARNINGS[sel].map((w, i) => <div key={i} className="attn" style={{ borderBottom: 0, paddingBottom: 0 }}><AlertTriangle size={14} color={C.amber} /><span className="small">{w}</span></div>)}
+                <div style={{ marginTop: 14 }}>
+                  <div className="small mute" style={{ marginBottom: 6 }}>Allocation after this scenario (target bar below)</div>
+                  <BucketBar compact />
+                </div>
+                <div style={{ marginTop: 14, borderTop: `1px solid ${C.line}`, paddingTop: 10 }}>
+                  <div className="row gap small" style={{ marginBottom: 6 }}><MessageSquare size={13} className="mute" /><b>Review thread</b></div>
+                  {sel === 1 ? (
+                    <>
+                      <div className="small"><b>S. Krishnan (CA)</b> · 54EC cap is ₹50 L per FY; gain is well within. Confirm buyer's TDS under 194-IA at 1%.</div>
+                      <div className="small" style={{ marginTop: 4 }}><b>Arjun</b> · Agreed. Approve once CA confirms indexation vs 12.5% — acquired Nov 2020 so both apply.</div>
+                    </>
+                  ) : <div className="small mute">No comments yet.</div>}
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {tab === "Compare" && (
+        <>
+          <Card title="Side by side — baseline and three scenarios">
+            <div className="scroll">
+              <table className="tbl"><thead><tr><th>Metric</th>{SCENARIOS.map((x) => <th key={x.id} className="num">{x.name.split(",")[0].split(" +")[0]}</th>)}</tr></thead>
+                <tbody>
+                  <tr><td>Tax, FY 26-27 + 27-28</td>{SCENARIOS.map((x) => <td key={x.id} className="num">{inr(x.tax)}</td>)}</tr>
+                  <tr><td>Saving vs baseline</td>{SCENARIOS.map((x) => <td key={x.id} className={`num ${x.saving ? "up" : ""}`}>{x.saving ? "−" + inr(x.saving) : "—"}</td>)}</tr>
+                  <tr><td>Post-tax cash freed</td>{SCENARIOS.map((x) => <td key={x.id} className="num">{inr(x.cash)}</td>)}</tr>
+                  <tr><td>Max bucket drift after</td>{SCENARIOS.map((x) => <td key={x.id} className="num">{x.drift} pp</td>)}</tr>
+                  <tr><td>Income bucket after</td>{["30.5%", "33.1%", "30.5%", "30.5%"].map((v, i) => <td key={i} className="num">{v}</td>)}</tr>
+                  <tr><td>Net worth, Mar 2028 (proj.)</td>{["₹59.8 L", "₹60.1 L", "₹59.8 L", "₹59.8 L"].map((v, i) => <td key={i} className="num">{v}</td>)}</tr>
+                  <tr><td>Actions / execution risk</td>{["—", "4 · property sale, 6-month 54EC window", "4 · low", "3 · clubbing risk"].map((v, i) => <td key={i} className="num small">{v}</td>)}</tr>
+                </tbody></table>
+            </div>
+          </Card>
+          <Card title="Projected tax by financial year">
+            <div style={{ height: 220 }}>
+              <ResponsiveContainer><BarChart data={TAX_BY_FY}><CartesianGrid vertical={false} stroke={C.line} /><XAxis dataKey="fy" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip /><Legend /><Bar dataKey="Baseline" fill={C.mute} radius={[3, 3, 0, 0]} /><Bar dataKey="Sell Anna Nagar" fill={C.teal} radius={[3, 3, 0, 0]} /><Bar dataKey="Harvest & split" fill={C.blue} radius={[3, 3, 0, 0]} /><Bar dataKey="SIPs via HUF" fill={C.violet} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer>
+            </div>
+          </Card>
+        </>
+      )}
+
+      {tab === "Tax position" && (
+        <>
+          <Card title="Projected tax computation — FY 2026-27, baseline" action={<div className="row gap"><Btn small icon={Download}>Tax computation</Btn><Btn small>Old vs new regime</Btn></div>}>
+            <div className="scroll">
+              <table className="tbl"><thead><tr><th>Entity</th><th>Regime</th><th className="num">Gross total income</th><th className="num">Capital gains</th><th className="num">Deductions</th><th className="num">Tax + cess</th><th className="num">Advance paid</th><th className="num">Balance</th></tr></thead>
+                <tbody>{TAX_POSITION.map((r) => <tr key={r[0]}>{r.map((c, i) => <td key={i} className={i > 1 ? "num" : ""}>{i === 1 && c.includes("?") ? <Pill tone="amber">{c}</Pill> : c}</td>)}</tr>)}
+                  <tr className="total"><td>Family</td><td></td><td className="num">₹20,210</td><td className="num">₹2,300</td><td className="num">₹1,500</td><td className="num">₹3,410</td><td className="num">₹1,200</td><td className="num">₹2,210</td></tr>
+                </tbody></table>
+            </div>
+            <div className="small mute" style={{ marginTop: 10 }}>Heads: salary/fees, house property (rent less 30% and interest), capital gains by asset class and term, other sources (interest, dividend). Slabs, surcharge, cess, rebate and deduction limits are data tables per FY.</div>
+          </Card>
+          <div className={mobile ? "" : "grid-2"}>
+            <Card title="Advance tax schedule — family">
+              <table className="tbl tight"><thead><tr><th>Instalment</th><th className="num">Cum. %</th><th className="num">Due</th><th className="num">Paid</th><th className="num">Shortfall</th></tr></thead>
+                <tbody>
+                  <tr><td>15 Jun 2026</td><td className="num">15%</td><td className="num">₹512</td><td className="num">₹500</td><td className="num">₹12</td></tr>
+                  <tr><td>15 Sep 2026</td><td className="num">45%</td><td className="num">₹1,535</td><td className="num">₹700</td><td className="num down">₹835</td></tr>
+                  <tr><td>15 Dec 2026</td><td className="num">75%</td><td className="num">₹2,558</td><td className="num">—</td><td className="num mute">—</td></tr>
+                  <tr><td>15 Mar 2027</td><td className="num">100%</td><td className="num">₹3,410</td><td className="num">—</td><td className="num mute">—</td></tr>
+                </tbody></table>
+              <div className="small mute" style={{ marginTop: 8 }}>234C interest exposure if Q2 not topped up: ₹33. Shortfalls feed the working-capital committed outflows.</div>
+            </Card>
+            <Card title="Old vs new regime — Mehta HUF">
+              <table className="tbl tight"><thead><tr><th></th><th className="num">New</th><th className="num">Old</th></tr></thead>
+                <tbody>
+                  <tr><td>Gross total income</td><td className="num">₹6,840</td><td className="num">₹6,840</td></tr>
+                  <tr><td>Deductions (80C PPF)</td><td className="num">—</td><td className="num">₹1,500</td></tr>
+                  <tr><td>Taxable income</td><td className="num">₹6,840</td><td className="num">₹5,340</td></tr>
+                  <tr><td>Tax incl. cess</td><td className="num">₹1,240</td><td className="num up">₹950</td></tr>
+                </tbody></table>
+              <div className="row gap" style={{ marginTop: 10 }}><Pill tone="teal">Old regime recommended · saves ₹290</Pill><Btn small>Add to scenario</Btn></div>
+            </Card>
+          </div>
+        </>
+      )}
+
+      {tab === "Optimiser" && (
+        <Card title="Suggestions against baseline" action={<div className="row gap"><Btn small icon={RefreshCw}>Re-run</Btn><span className="small mute">Total identified: ₹743 this FY</span></div>}>
+          {SUGGESTIONS.map((s, i) => (
+            <div key={i} className="attn">
+              <div style={{ flex: 1 }}><b>{s[0]}</b><div className="small mute">{s[1]}</div></div>
+              <Pill>{s[3]}</Pill>
+              <span className="num up" style={{ width: 70, textAlign: "right" }}>{s[2]}</span>
+              <div className="row gap"><Btn small>Add to scenario</Btn><Btn small>Dismiss</Btn></div>
+            </div>
+          ))}
+          <div className="small mute" style={{ marginTop: 10 }}>Rules the optimiser checks: unused LTCG exemption per entity, loss lots that offset booked gains, lots about to cross the long-term threshold, gains that can be split across FYs, old vs new regime per entity, which entity should hold a new investment (lowest marginal rate, clubbing-safe), 54EC / 54F on property sales, advance-tax shortfalls, NPS 80CCD(1B) and 80G headroom.</div>
+        </Card>
+      )}
+
+      {tab === "Execution" && (
+        <>
+          <div className={`kpis ${mobile ? "kpis-m" : ""}`} style={{ gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4,1fr)" }}>
+            <Card><div className="mute">Plans executing</div><div className="big-num">1</div><div className="small mute">Harvest losses, split gains</div></Card>
+            <Card><div className="mute">Actions done</div><div className="big-num">1 / 4</div><div className="prog" style={{ marginTop: 6 }}><div style={{ width: "25%", background: C.teal }} /></div></Card>
+            <Card><div className="mute">Planned saving</div><div className="big-num">₹620</div></Card>
+            <Card><div className="mute">Realised so far</div><div className="big-num up">₹60</div><div className="small mute">STCL set-off booked</div></Card>
+          </div>
+          <Card title="Harvest losses, split gains across FYs — execution tracker">
+            <table className="tbl"><thead><tr><th>Action</th><th>Planned</th><th>Actual</th><th className="num">Variance</th><th>Linked task</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr><td><b>Redeem Axis Small Cap (loss lot)</b></td><td className="small">18 Aug 2026 · ₹4,600</td><td className="small">18 Aug 2026 · ₹4,600 (CAS import)</td><td className="num">₹0 · 0 d</td><td className="small mute">—</td><td><Pill tone="teal">done · verified</Pill></td></tr>
+                <tr><td><b>Sell 4 TCS within LTCG exemption</b></td><td className="small">20 Mar 2027 · ₹15,155</td><td className="small mute">—</td><td className="num mute">—</td><td className="small">Task #41 · Spouse</td><td><Pill>planned</Pill></td></tr>
+                <tr><td><b>Re-buy TCS next day</b></td><td className="small">21 Mar 2027 · ₹15,155</td><td className="small mute">—</td><td className="num mute">—</td><td className="small">Task #42 · Spouse</td><td><Pill>planned</Pill></td></tr>
+                <tr><td><b>Sell 5 TCS in FY 2027-28</b></td><td className="small">5 Apr 2027 · ₹18,944</td><td className="small mute">—</td><td className="num mute">—</td><td className="small">Task #43 · Spouse</td><td><Pill>planned</Pill></td></tr>
+              </tbody></table>
+            <div className="small mute" style={{ marginTop: 10 }}>Actual values come from the next contract-note or CAS import that matches the action (instrument, entity, quantity, date window). Price or date variance beyond tolerance re-runs the simulation and flags the tax delta.</div>
+          </Card>
+        </>
+      )}
+    </>
+  );
+};
+
+
+/* ---------- general ledger ---------- */
+const TB = [
+  ["1110", "Bank accounts", "asset", 18623, 0], ["1130", "Liquid & overnight funds", "asset", 0, 0], ["1220", "Mutual funds", "asset", 14200, 0],
+  ["1240", "AIF", "asset", 10000, 0], ["1295", "Private investments & startups", "asset", 145000, 0], ["1310", "Immovable property", "asset", 39590, 0],
+  ["1410", "Rent receivable", "asset", 0, 0], ["1420", "TDS receivable", "asset", 1710, 0], ["1430", "Advance tax paid", "asset", 400, 0],
+  ["2240", "GST output payable", "liability", 0, 513], ["2230", "Security deposits received", "liability", 0, 17100], ["2270", "Unfunded commitments (memo)", "liability", 0, 40000],
+  ["3100", "Capital account", "equity", 0, 165970], ["4100", "Rental income", "income", 0, 17100], ["4700", "Fund distributions", "income", 0, 0],
+  ["4400", "Capital gains — short term", "income", 200, 0], ["5110", "Property tax", "expense", 482, 0], ["5120", "Maintenance & repairs", "expense", 220, 0], ["5220", "PMS / AIF fees", "expense", 0, 0],
+];
+const JOURNALS = [
+  ["11 Sep", 47, "auto", "Rent received – Kovai Analytics (Sep)", [["1110 Bank accounts", 2565, 0], ["1420 TDS receivable", 285, 0], ["1410 Rent receivable", 0, 2850]], "bank_txn"],
+  ["10 Sep", 46, "auto", "SIP – Parag Parikh Flexi Cap", [["1220 Mutual funds", 2000, 0], ["1110 Bank accounts", 0, 2000]], "investment_txn"],
+  ["09 Sep", 45, "auto", "Property tax – CCMC, Race Course Road", [["5110 Property tax", 482, 0], ["1110 Bank accounts", 0, 482]], "property_tax"],
+  ["01 Sep", 44, "auto", "Rent accrued – Race Course Road (Sep)", [["1410 Rent receivable", 3363, 0], ["4100 Rental income", 0, 2850], ["2240 GST output payable", 0, 513]], "rent_schedule"],
+  ["18 Aug", 41, "auto", "Redemption – Axis Small Cap (loss lot)", [["1110 Bank accounts", 4600, 0], ["4400 Capital gains — short term", 200, 0], ["1220 Mutual funds", 0, 4800]], "investment_txn"],
+  ["02 Aug", 39, "manual", "CA fees Q1 – accrued", [["5700 Professional fees", 150, 0], ["2220 Vendor payables", 0, 150]], "manual"],
+];
+const Books = ({ mobile }) => {
+  const [tab, setTab] = useState("Trial balance");
+  const [open, setOpen] = useState(47);
+  const ent = "Mehta HUF · FY 2026-27 · accrual";
+  const dr = TB.reduce((a, r) => a + r[3], 0), cr = TB.reduce((a, r) => a + r[4], 0);
+  return (
+    <>
+      <div className="tabs">{["Trial balance", "Journals", "Ledger", "Statements", "Periods & close", "Reconciliation", "Posting rules"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "Trial balance" && (
+        <Card title={`Trial balance — ${ent}`} action={<div className="row gap"><Pill tone="teal">Balanced</Pill><Pill tone="amber">2 unposted</Pill><Btn small icon={Download}>Excel</Btn></div>}>
+          <table className="tbl"><thead><tr><th>Code</th><th>Account</th><th>Type</th><th className="num">Debit</th><th className="num">Credit</th></tr></thead>
+            <tbody>{TB.map((r) => <tr key={r[0]}><td className="mute">{r[0]}</td><td>{r[1]}</td><td><Pill>{r[2]}</Pill></td><td className="num">{r[3] ? `₹${r[3].toLocaleString("en-IN")}` : "—"}</td><td className="num">{r[4] ? `₹${r[4].toLocaleString("en-IN")}` : "—"}</td></tr>)}
+              <tr className="total"><td></td><td>Total</td><td></td><td className="num">₹{dr.toLocaleString("en-IN")}</td><td className="num">₹{cr.toLocaleString("en-IN")}</td></tr>
+            </tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Investments at cost (1220, 1240, 1295) tie to holdings cost; 1110 ties to the AA balance; 1410 is zero because Race Course Road rent was received — the overdue Saibaba rent sits in Arjun's book, not the HUF's.</div>
+        </Card>
+      )}
+      {tab === "Journals" && (
+        <div className={mobile ? "" : "grid-rep"}>
+          <Card title="Day book" action={<Btn small primary icon={Plus}>Manual journal</Btn>}>
+            {JOURNALS.map((j) => <div key={j[1]} className={`rep ${open === j[1] ? "on" : ""}`} onClick={() => setOpen(j[1])}><div className="row" style={{ justifyContent: "space-between" }}><b>#{j[1]} · {j[3]}</b><Pill tone={j[2] === "auto" ? "teal" : "blue"}>{j[2]}</Pill></div><div className="small mute">{j[0]} 2026 · source: {j[5]}</div></div>)}
+          </Card>
+          {(() => { const j = JOURNALS.find((x) => x[1] === open); return (
+            <Card title={`Journal #${j[1]} — ${j[3]}`} action={<div className="row gap"><Btn small>Open source</Btn><Btn small>Reverse</Btn></div>}>
+              <table className="tbl"><thead><tr><th>Account</th><th className="num">Debit</th><th className="num">Credit</th></tr></thead>
+                <tbody>{j[4].map((l, i) => <tr key={i}><td>{l[0]}</td><td className="num">{l[1] ? `₹${l[1].toLocaleString("en-IN")}` : ""}</td><td className="num">{l[2] ? `₹${l[2].toLocaleString("en-IN")}` : ""}</td></tr>)}</tbody></table>
+              <div className="small mute" style={{ marginTop: 10 }}>{j[2] === "auto" ? `Posted by rule ${j[5]}.* on import; linked to the source record. Posted journals are immutable — corrections are reversals.` : "Manual journal by Rohan Iyer, approved by Arjun (maker-checker on)."}</div>
+            </Card>); })()}
+        </div>
+      )}
+      {tab === "Ledger" && (
+        <Card title="Ledger — 1410 Rent receivable (sub-ledger: Kovai Analytics)" action={<div className="search"><Search size={13} /><span className="mute">Account or tenant / property / holding</span></div>}>
+          <table className="tbl"><thead><tr><th>Date</th><th>Jnl</th><th>Narration</th><th className="num">Debit</th><th className="num">Credit</th><th className="num">Balance</th></tr></thead>
+            <tbody>
+              <tr><td>01 Aug</td><td className="mute">#36</td><td>Rent accrued – Aug</td><td className="num">₹3,363</td><td className="num"></td><td className="num">₹3,363</td></tr>
+              <tr><td>01 Aug</td><td className="mute">#37</td><td>Rent received – Aug (net of TDS)</td><td className="num"></td><td className="num">₹3,363</td><td className="num">₹0</td></tr>
+              <tr><td>01 Sep</td><td className="mute">#44</td><td>Rent accrued – Sep</td><td className="num">₹3,363</td><td className="num"></td><td className="num">₹3,363</td></tr>
+              <tr><td>11 Sep</td><td className="mute">#47</td><td>Rent received – Sep (net of TDS)</td><td className="num"></td><td className="num">₹3,363</td><td className="num">₹0</td></tr>
+            </tbody></table>
+        </Card>
+      )}
+      {tab === "Statements" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="Income & expenditure — HUF, FY 2026-27 to date" action={<Btn small icon={Download}>PDF</Btn>}>
+            <table className="tbl tight"><tbody>
+              <tr><td>Rental income (house property)</td><td className="num">₹17,100</td></tr>
+              <tr><td>Capital gains — short term (loss)</td><td className="num down">−₹200</td></tr>
+              <tr><td>Property tax, maintenance</td><td className="num down">−₹702</td></tr>
+              <tr><td>Professional fees</td><td className="num down">−₹150</td></tr>
+              <tr className="total"><td>Surplus</td><td className="num">₹16,048</td></tr>
+            </tbody></table>
+            <div className="small mute" style={{ marginTop: 8 }}>ITR mapping: house property ₹17,100 less 30% standard deduction is computed in the tax module, not the books.</div>
+          </Card>
+          <Card title="Balance sheet — HUF, as of 11 Sep 2026" action={<Btn small>Consolidated (3 entities)</Btn>}>
+            <table className="tbl tight"><tbody>
+              <tr><td><b>Assets</b></td><td></td></tr>
+              <tr><td>Investments at cost</td><td className="num">₹1,69,200</td></tr>
+              <tr><td>Immovable property</td><td className="num">₹39,590</td></tr>
+              <tr><td>Bank, receivables, advance tax</td><td className="num">₹20,733</td></tr>
+              <tr><td><b>Liabilities</b></td><td></td></tr>
+              <tr><td>Deposits received, GST payable</td><td className="num">₹17,613</td></tr>
+              <tr className="total"><td>Capital + surplus</td><td className="num">₹2,11,910</td></tr>
+            </tbody></table>
+            <div className="small mute" style={{ marginTop: 8 }}>Books carry investments at cost; the dashboard's net worth uses market value. MTM to a reserve can be elected per book.</div>
+          </Card>
+        </div>
+      )}
+      {tab === "Periods & close" && (
+        <Card title="Periods — Mehta HUF" action={<Btn small primary>Year-end close FY 2025-26</Btn>}>
+          <table className="tbl"><thead><tr><th>FY</th><th>Period</th><th>Status</th><th>Closed by</th><th>Preconditions</th><th></th></tr></thead>
+            <tbody>
+              <tr><td>2025-26</td><td>Apr 2025 – Mar 2026</td><td><Pill tone="teal"><Lock size={11} /> locked</Pill></td><td>S. Krishnan · 28 Jul</td><td className="small mute">closed to capital; Tally exported</td><td></td></tr>
+              <tr><td>2026-27</td><td>Apr – Jun 2026</td><td><Pill tone="teal"><Lock size={11} /> locked</Pill></td><td>S. Krishnan · 20 Aug</td><td className="small mute">0 unposted · bank reconciled</td><td></td></tr>
+              <tr><td>2026-27</td><td>Jul – Sep 2026</td><td><Pill tone="amber"><Unlock size={11} /> open</Pill></td><td>—</td><td className="small"><span className="down">2 unposted</span> · bank diff ₹0</td><td><Btn small>Soft close</Btn></td></tr>
+            </tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Locking requires zero unposted events and a completed bank reconciliation; the database rejects any posting dated inside a locked period.</div>
+        </Card>
+      )}
+      {tab === "Reconciliation" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="Bank reconciliation — ICICI ••0928" action={<Pill tone="teal">Difference ₹0</Pill>}>
+            <table className="tbl tight"><tbody>
+              <tr><td>Ledger balance (1110)</td><td className="num">₹18,623</td></tr>
+              <tr><td>Statement balance (AA, 11 Sep 10:41)</td><td className="num">₹18,623</td></tr>
+              <tr><td>Unmatched in ledger</td><td className="num">0</td></tr>
+              <tr><td>Unmatched in statement</td><td className="num">0</td></tr>
+            </tbody></table>
+          </Card>
+          <Card title="Investments: books (ABOR) vs holdings (IBOR)" action={<Pill tone="amber">1 difference</Pill>}>
+            <table className="tbl tight"><thead><tr><th>Instrument</th><th className="num">Book cost</th><th className="num">Holdings cost</th><th className="num">Diff</th></tr></thead>
+              <tbody>
+                <tr><td>Parag Parikh Flexi Cap</td><td className="num">₹14,200</td><td className="num">₹14,200</td><td className="num">₹0</td></tr>
+                <tr><td>Neo Special Credit AIF</td><td className="num">₹10,000</td><td className="num">₹10,000</td><td className="num">₹0</td></tr>
+                <tr><td>Varaha Angel Fund II</td><td className="num">₹1,20,000</td><td className="num">₹1,20,000</td><td className="num">₹0</td></tr>
+                <tr><td>Cropsense AgriTech</td><td className="num">₹50,000</td><td className="num">₹50,000</td><td className="num">₹0</td></tr>
+                <tr><td>ITC (post-demerger)</td><td className="num down">₹936</td><td className="num">₹1,000</td><td className="num down">−₹64</td></tr>
+              </tbody></table>
+            <div className="small mute" style={{ marginTop: 8 }}>Demerger cost split posted in books but holding lot not yet re-allocated — review in Corporate actions.</div>
+          </Card>
+        </div>
+      )}
+      {tab === "Posting rules" && (
+        <Card title="Posting rules — 26 system defaults, 1 family override" action={<Btn small primary icon={Plus}>Override</Btn>}>
+          <table className="tbl"><thead><tr><th>Event</th><th>Class</th><th>Debit</th><th>Credit</th><th>Scope</th></tr></thead>
+            <tbody>
+              <tr><td><b>investment_txn.sell</b></td><td>equity</td><td className="small">1110 Bank (net) · 5210 Charges</td><td className="small">1210 Equity (cost of lots sold) · 4400/4410 Gain by term</td><td><Pill>system</Pill></td></tr>
+              <tr><td><b>rent.accrued</b></td><td>—</td><td className="small">1410 Rent receivable (rent + GST)</td><td className="small">4100 Rental income · 2240 GST output</td><td><Pill>system</Pill></td></tr>
+              <tr><td><b>rent.received</b></td><td>—</td><td className="small">1110 Bank (net) · 1420 TDS receivable</td><td className="small">1410 Rent receivable</td><td><Pill>system</Pill></td></tr>
+              <tr><td><b>liability.emi</b></td><td>—</td><td className="small">2110 Loan (principal) · 5300 Interest</td><td className="small">1110 Bank (EMI)</td><td><Pill>system</Pill></td></tr>
+              <tr><td><b>investment_txn.distribution</b></td><td>private</td><td className="small">1110 Bank</td><td className="small">4700 Distributions (income) · 1295 Private (return of capital)</td><td><Pill>system</Pill></td></tr>
+              <tr><td><b>bank_txn.household</b></td><td>—</td><td className="small">5500 Household & lifestyle → <b>5510 Education</b></td><td className="small">1110 Bank</td><td><Pill tone="blue">family override</Pill></td></tr>
+            </tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Events with no matching rule go to the unposted queue; nothing is silently skipped.</div>
+        </Card>
+      )}
+    </>
+  );
+};
+
+
+/* ---------- action plane ---------- */
+const INTENTS = [
+  { id: "A-118", kind: "MF purchase", what: "Buy Kotak Equity Arbitrage – Direct Growth", amt: 14000, entity: "Arjun", by: "Assistant", src: "Deployment plan #7", status: "pending", approvals: "0 / 1", policy: "pass", sim: "Post-tax 5.7% · drift Liquidity +0.9pp · float ok", conn: "BSE StAR MF · RIA code · NACH mandate (test market)" },
+  { id: "A-119", kind: "MF purchase", what: "Buy ICICI Liquid Fund – Direct Growth", amt: 7000, entity: "HUF", by: "Assistant", src: "Deployment plan #7", status: "pending", approvals: "0 / 1", policy: "pass", sim: "Post-tax 4.8% · advance tax 15 Dec covered", conn: "BSE StAR MF · NACH mandate (test market)" },
+  { id: "A-120", kind: "Assisted", what: "91-day T-bill bid ₹6,000 on RBI Retail Direct", amt: 6000, entity: "HUF", by: "Assistant", src: "Deployment plan #7", status: "pending", approvals: "0 / 1", policy: "pass", sim: "Matches Varaha drawdown 14 Oct", conn: "— (manual, pre-filled)" },
+  { id: "A-121", kind: "Bill payment", what: "Property tax – GCC Anna Nagar (BBPS)", amt: 360, entity: "Spouse", by: "Rule: property tax due", src: "Property tax #GCC/AN/77210", status: "pending", approvals: "0 / 1", policy: "pass", sim: "Posts 5110 / 1110", conn: "Setu BBPS" },
+  { id: "A-117", kind: "Equity order", what: "Sell 4 TCS @ market (within LTCG exemption)", amt: 15155, entity: "Spouse", by: "Plan: Harvest & split", src: "Plan action #2", status: "approved · cooling-off 18 min", approvals: "2 / 2", policy: "pass", sim: "LTCG ₹1,250 → tax ₹0 · lot resets", conn: "ICICI Breeze" },
+  { id: "A-116", kind: "Bank transfer", what: "Transfer to Varaha Angel Fund II escrow (drawdown 4/6)", amt: 20000, entity: "HUF", by: "Rule: capital call", src: "Commitment schedule", status: "policy failed", approvals: "—", policy: "fail: payee unverified (24 h block)", sim: "Cash after ₹18,623 → ₹−1,377 · below float", conn: "ICICI CIB" },
+  { id: "A-112", kind: "MF redemption", what: "Redeem ₹18,000 Parag Parikh Flexi Cap → ICICI Liquid", amt: 18000, entity: "HUF", by: "Assistant", src: "Rebalance proposal", status: "filled · reconciled · posted", approvals: "1 / 1", policy: "pass", sim: "STCG ₹0 (loss lot first) · Liquidity −1.8pp → 0", conn: "BSE StAR MF · RIA code" },
+];
+const CHAT = [
+  ["user", "Deploy this month's idle cash as per the ladder and keep enough for the Varaha drawdown."],
+  ["assistant", "Idle cash across HDFC and ICICI is ₹31,000 above the 60-day float (₹22,600). The ladder for that amount: ₹4,000 overnight, ₹7,000 liquid (HUF, advance tax 15 Dec), ₹14,000 arbitrage (Arjun, 30% slab → 5.7% post-tax), ₹6,000 91-day T-bill maturing before the 14 Oct drawdown. I've drafted four intents (A-118 to A-121 excluding the bill). Tax effect nil this FY; Liquidity bucket drift moves from −1.8pp to +0.9pp. T-bills have no API, so that one is an assisted instruction. Nothing is submitted until you approve."],
+  ["tool", "read_cash_position · read_working_capital_plan · read_bucket_drift · propose_intent ×3"],
+  ["user", "Why arbitrage in Arjun's name and not the HUF?"],
+  ["assistant", "Both are in the 30% slab, but the HUF's liquid allocation is earmarked for its own advance tax, while Arjun has no dated need for 12 months — so the equity-taxed arbitrage fund (12.5% after a year) sits better with him. Routing HUF money to Arjun would be a gift with clubbing implications, so I kept each entity's cash in its own name."],
+];
+const ActionPlane = ({ mobile }) => {
+  const [tab, setTab] = useState("Approvals");
+  const [sel, setSel] = useState("A-118");
+  const it = INTENTS.find((x) => x.id === sel);
+  const tone = (st) => st.startsWith("pending") ? "amber" : st.startsWith("policy") ? "red" : st.startsWith("approved") ? "blue" : "teal";
+  return (
+    <>
+      <div className="tabs">{["Approvals", "Assistant", "In-flight & history", "Connectors", "Policies & payees", "Oversight"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "Approvals" && (
+        <div className={mobile ? "" : "grid-rep"}>
+          <Card title="Pending approval" action={<div className="row gap"><Pill tone="amber">4 pending · ₹27,360</Pill><Btn small primary icon={Fingerprint}>Approve batch</Btn></div>}>
+            {INTENTS.filter((x) => x.status.startsWith("pending") || x.status.startsWith("policy")).map((x) => (
+              <div key={x.id} className={`rep ${x.id === sel ? "on" : ""}`} onClick={() => setSel(x.id)}>
+                <div className="row" style={{ justifyContent: "space-between" }}><b>{x.what}</b><span className="num">₹{x.amt.toLocaleString("en-IN")}</span></div>
+                <div className="row gap small mute"><Pill>{x.kind}</Pill><span>{x.entity}</span><span>·</span><span>{x.by}</span><Pill tone={tone(x.status)}>{x.status}</Pill></div>
+              </div>
+            ))}
+            <div className="small mute" style={{ marginTop: 10 }}>Expire in 23 h. Batch approval covers the deployment plan (A-118–A-120); each intent still passes its own policy.</div>
+          </Card>
+          <Card title={`${it.id} · ${it.what}`} action={<div className="row gap"><Btn small>Reject</Btn><Btn small>Edit</Btn><Btn small primary icon={Fingerprint}>Approve with Face ID</Btn></div>}>
+            <table className="tbl tight"><tbody>
+              <tr><td className="mute">Amount · entity</td><td>₹{it.amt.toLocaleString("en-IN")} · {it.entity}</td></tr>
+              <tr><td className="mute">Proposed by</td><td>{it.by} · from {it.src}</td></tr>
+              <tr><td className="mute">Simulated effect</td><td>{it.sim}</td></tr>
+              <tr><td className="mute">Policy</td><td>{it.policy === "pass" ? <Pill tone="teal">all checks pass</Pill> : <Pill tone="red">{it.policy}</Pill>} <span className="small mute">single ≤ ₹5 L · daily used ₹0 of ₹10 L · trading hours · payee verified</span></td></tr>
+              <tr><td className="mute">Approvals</td><td>{it.approvals} required · four-eyes: proposer cannot approve</td></tr>
+              <tr><td className="mute">Connector</td><td>{it.conn}</td></tr>
+              <tr><td className="mute">Provider request</td><td className="small" style={{ fontFamily: "monospace" }}>{it.kind === "MF purchase" ? `POST /mf/orders {tradingsymbol:"INF174K01LS2", transaction_type:"BUY", amount:${it.amt}}` : it.kind === "Bill payment" ? `POST /bbps/pay {billerId:"GCC00000NATUR", amount:${it.amt}, ref:"GCC/AN/77210"}` : it.kind === "Assisted" ? "Pre-filled RBI Retail Direct bid; you confirm completion" : "—"}</td></tr>
+            </tbody></table>
+            {it.id === "A-116" && <div className="attn" style={{ borderBottom: 0 }}><AlertTriangle size={14} color={C.red} /><span className="small">Payee "Varaha Fund II escrow" was added 3 hours ago and is unverified. Ask Priya to verify; the 24 h new-payee block lifts tomorrow 09:12. Cash would also fall below float — the assistant suggests funding from the liquid fund first.</span></div>}
+            <div className="small mute" style={{ marginTop: 10 }}>Approval is step-up authenticated and recorded with device and IP. Approval queues the intent; a separate executor submits it. Nothing runs while the kill switch is on.</div>
+          </Card>
+        </div>
+      )}
+      {tab === "Assistant" && (
+        <div className={mobile ? "" : "grid-rep"}>
+          <Card title="Session · deploy cash · claude-sonnet" action={<Pill tone="teal"><Bot size={11} /> read tools + propose_intent</Pill>}>
+            {CHAT.map((m, i) => <div key={i} className="attn" style={{ alignItems: "flex-start" }}><Pill tone={m[0] === "user" ? "blue" : m[0] === "tool" ? "mute" : "teal"}>{m[0]}</Pill><span className="small" style={{ flex: 1 }}>{m[1]}</span></div>)}
+            <div className="search" style={{ marginTop: 10 }}><span className="mute">Ask, or say what you want done — drafts go to Approvals</span></div>
+          </Card>
+          <Card title="What the assistant can and cannot do">
+            <table className="tbl tight"><tbody>
+              <tr><td><ShieldCheck size={14} color={C.teal} /></td><td>Read holdings, cash, tasks, plans, IPS, tax projection, prices, policies</td></tr>
+              <tr><td><ShieldCheck size={14} color={C.teal} /></td><td>Draft intents with rationale and simulated effect (one write tool: propose_intent)</td></tr>
+              <tr><td><X size={14} color={C.red} /></td><td>Approve, queue, execute, edit policies or connectors, read credentials</td></tr>
+              <tr><td><X size={14} color={C.red} /></td><td>Invent amounts or payees — payloads come from tool results only</td></tr>
+              <tr><td><ShieldCheck size={14} color={C.teal} /></td><td>Every message, tool call and result is stored with model version</td></tr>
+            </tbody></table>
+          </Card>
+        </div>
+      )}
+      {tab === "In-flight & history" && (
+        <Card title="All intents — last 30 days" action={<Btn small icon={Download}>Execution audit</Btn>}>
+          <div className="scroll">
+            <table className="tbl"><thead><tr><th>Id</th><th>Intent</th><th>Kind</th><th>Entity</th><th className="num">Amount</th><th>Proposed by</th><th>Approvals</th><th>Status</th></tr></thead>
+              <tbody>{INTENTS.map((x) => <tr key={x.id}><td className="mute">{x.id}</td><td><b>{x.what}</b><div className="small mute">{x.conn}</div></td><td>{x.kind}</td><td>{x.entity}</td><td className="num">₹{x.amt.toLocaleString("en-IN")}</td><td className="small">{x.by}</td><td>{x.approvals}</td><td><Pill tone={tone(x.status)}>{x.status}</Pill></td></tr>)}</tbody></table>
+          </div>
+          <div className="small mute" style={{ marginTop: 10 }}>A-112: filled via BSE StAR MF (order 240911000123) · matched to CAS import 12 Sep · GL journal #48 · rebalance task verified.</div>
+        </Card>
+      )}
+      {tab === "Connectors" && (
+        <Card title="Connectors" action={<Btn small primary icon={Plus}>Add connector</Btn>}>
+          <table className="tbl"><thead><tr><th>Provider</th><th>Entity</th><th>Kind</th><th>Scopes</th><th>Session</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td><b>Zerodha Kite Connect</b><div className="small mute">client ZX1234 · static IP registered · MF endpoints are read-only</div></td><td>Arjun</td><td>Broker (MF read)</td><td className="small">place:orders, read:positions, read:mf</td><td className="small">Daily login done 09:02 · expires 06:00</td><td><Pill tone="amber">sandbox</Pill></td></tr>
+              <tr><td><b>ICICI Direct Breeze</b></td><td>Spouse</td><td>Broker</td><td className="small">place:orders</td><td className="small">TOTP session · expires 23:59</td><td><Pill tone="teal">active</Pill></td></tr>
+              <tr><td><b>ICICI Corporate API Suite</b><div className="small mute">••0928 current · portal-authorisation mode on</div></td><td>HUF</td><td>Bank API</td><td className="small">initiate:payment (registered beneficiaries), txn:status, read:balance</td><td className="small">Certificate · static IP</td><td><Pill tone="teal">active</Pill></td></tr>
+              <tr><td><b>Setu BBPS</b></td><td>All</td><td>Bills</td><td className="small">fetch:bill, pay:bill</td><td className="small">API key</td><td><Pill tone="teal">active</Pill></td></tr>
+              <tr><td><b>BSE StAR MF via Cybrilla FP</b><div className="small mute">RIA code · NACH mandates: Arjun ✓, Spouse ✓, HUF pending</div></td><td>All</td><td>MF platform</td><td className="small">mf:purchase, mf:redeem, mf:switch, mandate:register</td><td className="small">Test market</td><td><Pill tone="amber">sandbox</Pill></td></tr>
+            </tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Credentials are in the vault; only the executor container can read them. Every connector starts in sandbox and goes live after a dry-run intent succeeds end to end.</div>
+        </Card>
+      )}
+      {tab === "Policies & payees" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="Execution policies" action={<Btn small icon={Plus}>Add</Btn>}>
+            {[["Single amount ≤ ₹5,00,000", "all kinds · 1 approver"], ["₹5 L – ₹25 L", "2 approvers"], ["> ₹25 L", "2 approvers + 30-min cooling-off"], ["Daily cap ₹10,00,000 · monthly ₹50,00,000", "per entity"], ["Max 20 orders / day", "keeps orders manual under SEBI API rules"], ["Payees: allow-list only · new payee blocked 24 h · verified by a second user", "payments"], ["Trading hours only · simulation required · tax check on sells · IPS pass required", "orders"], ["Operators may auto-approve rent reminders", "no money movement"]].map(([a, b]) => <div key={a} className="attn"><ShieldCheck size={14} color={C.teal} /><div style={{ flex: 1 }}><b>{a}</b><div className="small mute">{b}</div></div></div>)}
+          </Card>
+          <Card title="Payees (allow-list)" action={<Btn small icon={Plus}>Add payee</Btn>}>
+            <table className="tbl tight"><thead><tr><th>Payee</th><th>Kind</th><th>Verified</th></tr></thead>
+              <tbody>
+                <tr><td>Greater Chennai Corporation (BBPS)</td><td>tax authority</td><td><Pill tone="teal">Priya · Jun</Pill></td></tr>
+                <tr><td>Coimbatore City Municipal Corp (BBPS)</td><td>tax authority</td><td><Pill tone="teal">Priya · Jun</Pill></td></tr>
+                <tr><td>Cool Care Services · ••4471</td><td>vendor</td><td><Pill tone="teal">Arjun · Aug</Pill></td></tr>
+                <tr><td>Own account · HDFC ••4471</td><td>own account</td><td><Pill tone="teal">system</Pill></td></tr>
+                <tr><td>Varaha Fund II escrow · ••8801</td><td>fund house</td><td><Pill tone="red">unverified · added 3 h ago</Pill></td></tr>
+              </tbody></table>
+          </Card>
+        </div>
+      )}
+      {tab === "Oversight" && (
+        <>
+          <div className={`kpis ${mobile ? "kpis-m" : ""}`} style={{ gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(5,1fr)" }}>
+            <Card><div className="mute">Kill switch</div><div className="row gap" style={{ marginTop: 6 }}><Pill tone="teal">running</Pill><Btn small icon={Pause}>Pause all</Btn></div></Card>
+            <Card><div className="mute">Pending approvals</div><div className="big-num">4</div><div className="small mute">₹27,360 · oldest 2 h</div></Card>
+            <Card><div className="mute">In-flight</div><div className="big-num">1</div><div className="small mute">A-117 cooling-off</div></Card>
+            <Card><div className="mute">Failed (24 h)</div><div className="big-num">0</div></Card>
+            <Card><div className="mute">30-day executed</div><div className="big-num">₹18,000</div><div className="small mute">1 intent · 100% AI-drafted</div></Card>
+          </div>
+          <div className={mobile ? "" : "grid-2"}>
+            <Card title="Anomaly signals">
+              {[["red", "A-116: new payee added and used within 3 h (blocked by policy)"], ["amber", "A-117: ₹15,155 sell is 2.4× the 90-day median for equity orders"], ["teal", "No intents proposed and approved within 60 s"], ["teal", "No connector used from a new IP"]].map(([t, m], i) => <div key={i} className="attn"><Circle size={8} fill={C[t]} color={C[t]} /><span className="small">{m}</span></div>)}
+            </Card>
+            <Card title="Limits consumed today">
+              <table className="tbl tight"><thead><tr><th>Entity</th><th>Kind</th><th className="num">Used</th><th className="num">Cap</th></tr></thead>
+                <tbody>
+                  <tr><td>Arjun</td><td>orders</td><td className="num">₹0</td><td className="num">₹10,00,000</td></tr>
+                  <tr><td>HUF</td><td>payments</td><td className="num">₹0</td><td className="num">₹10,00,000</td></tr>
+                  <tr><td>All</td><td>orders / day</td><td className="num">0</td><td className="num">20</td></tr>
+                </tbody></table>
+              <div className="small mute" style={{ marginTop: 8 }}>Policy changes in last 30 days: 1 (Arjun raised daily cap ₹5 L → ₹10 L on 2 Sep; audit-logged).</div>
+            </Card>
+          </div>
+        </>
+      )}
+    </>
+  );
+};
+
+
+/* ---------- investment policy framework ---------- */
+const POLICIES = [
+  { id: "fam", scope: "Family", name: "Mehta Family Investment Policy", v: 3, status: "active", eff: "1 Apr 2026", profile: "Moderate (58)", comp: "warning", review: "1 Apr 2027", inherits: null },
+  { id: "huf", scope: "Entity", name: "Mehta HUF", v: 2, status: "active", eff: "1 Apr 2026", profile: "Moderate (61)", comp: "compliant", review: "1 Apr 2027", inherits: "family · 3 overrides" },
+  { id: "ret", scope: "Goal", name: "Retirement income floor (2036)", v: 1, status: "active", eff: "15 Jun 2026", profile: "Moderately conservative (44)", comp: "breach", review: "15 Dec 2026 (quarterly)", inherits: "family · 6 overrides" },
+  { id: "mba", scope: "Goal", name: "Daughter's overseas MBA (2029)", v: 2, status: "in review", eff: "—", profile: "Conservative (26)", comp: "—", review: "—", inherits: "family · 5 overrides" },
+];
+const CLAUSES = [
+  ["Objectives", "Return objective", "6% real", "5% real", true], ["Objectives", "Horizon", "Multi-generational", "10 years", true],
+  ["Risk", "Profile", "Moderate", "Moderately conservative", true], ["Risk", "Max drawdown accepted", "−20%", "−12%", true],
+  ["Allocation", "Equity band", "60% (50–70)", "45% (35–55)", true], ["Allocation", "Debt band", "25% (20–35)", "40% (30–50)", true], ["Allocation", "Gold band", "5% (3–10)", "5% (3–10)", false], ["Allocation", "Glide path", "—", "Equity −3pp/yr from 2031", true],
+  ["Constraints", "Liquidity coverage", "24 months", "36 months", true], ["Constraints", "Tax", "Direct plans · LTCG-first · use exemptions", "inherited", false],
+  ["Permitted", "Prohibited", "F&O, crypto, unrated debt, single stocks > 5%", "inherited", false], ["Permitted", "Min rating", "AA", "AA+", true],
+  ["Concentration", "Max single issuer", "10%", "inherited", false], ["Concentration", "Max illiquid", "25%", "10%", true],
+  ["Rebalancing", "Method", "Bands + quarterly · new cash first · tax-aware", "inherited", false],
+  ["Guardrails", "Approval tiers", "≤₹5 L: 1 · ≤₹25 L: 2 · above: 2 + cooling-off", "inherited", false],
+];
+const COMPLIANCE = [
+  ["allocation", "Equity", "45% (35–55)", "58.9% look-through", "breach", "Growth assets grew; goal-linked balanced fund is 62% equity"],
+  ["risk_limit", "Max drawdown (1y)", "≥ −12%", "−9.4%", "in band", ""],
+  ["risk_limit", "Volatility (1y)", "≤ 11%", "12.6%", "warning", "soft threshold 11%, hard 14%"],
+  ["liquidity", "Liquidity coverage", "≥ 36 months", "41 months", "in band", ""],
+  ["ips_rule", "Max single issuer", "≤ 10%", "HDFC Bank 8.1%", "in band", ""],
+  ["permitted", "Prohibited instruments", "none held", "none", "in band", ""],
+  ["glide_path", "Equity vs glide", "60% (2026)", "58.9%", "in band", ""],
+];
+const REVIEWS = [
+  ["Scheduled", "Family policy annual review", "1 Apr 2027", "due in 6 months", "—"],
+  ["Trigger", "Retirement goal — equity breach persisting 31 days", "12 Oct 2026", "in progress", "Rohan Iyer"],
+  ["Scheduled", "Retirement goal quarterly", "15 Dec 2026", "due", "—"],
+  ["Trigger", "MBA goal — target amount changed ₹1.6 L → ₹2.0 L", "Completed 28 Aug", "amended → v2 in review", "Priya"],
+  ["Scheduled", "Family policy annual review", "Completed 22 Mar 2026", "amended → v3", "Arjun · CA"],
+];
+const Policy = ({ mobile }) => {
+  const [tab, setTab] = useState("Policies");
+  const [sel, setSel] = useState("ret");
+  const [step, setStep] = useState(2);
+  const pol = POLICIES.find((x) => x.id === sel);
+  const tone = (c) => c === "compliant" || c === "in band" ? "teal" : c === "warning" ? "amber" : c === "breach" ? "red" : "mute";
+  return (
+    <>
+      <div className="tabs">{["Policies", "Builder", "Allocation & bands", "Risk & guardrails", "Compliance", "Reviews", "Document"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "Policies" && (
+        <div className={mobile ? "" : "grid-rep"}>
+          <Card title="Investment policies" action={<Btn small primary icon={Plus}>New policy</Btn>}>
+            {POLICIES.map((x) => (
+              <div key={x.id} className={`rep ${x.id === sel ? "on" : ""}`} onClick={() => setSel(x.id)}>
+                <div className="row" style={{ justifyContent: "space-between" }}><b>{x.name}</b><Pill tone={tone(x.comp)}>{x.comp}</Pill></div>
+                <div className="small mute">{x.scope} · v{x.v} · {x.status} · {x.profile}{x.inherits ? ` · inherits ${x.inherits}` : ""}</div>
+              </div>
+            ))}
+            <div className="small mute" style={{ marginTop: 10 }}>Entity and goal policies inherit the family policy and override only what differs. Editing any target, band, rule or guardrail elsewhere creates a policy amendment.</div>
+          </Card>
+          <Card title={`${pol.name} — effective clauses (v${pol.v})`} action={<div className="row gap"><Btn small icon={GitBranch}>Amend (new draft)</Btn><Btn small icon={ScrollText}>IPS document</Btn></div>}>
+            <div className="row gap small mute" style={{ marginBottom: 8 }}><span>Effective {pol.eff}</span><span>·</span><span>Next review {pol.review}</span><span>·</span><span>Signed: Arjun (owner), Priya · CA reviewed</span></div>
+            <div className="scroll">
+              <table className="tbl tight"><thead><tr><th>Section</th><th>Clause</th><th>Family default</th><th>This policy</th><th></th></tr></thead>
+                <tbody>{CLAUSES.map((c, i) => <tr key={i}><td className="mute">{c[0]}</td><td>{c[1]}</td><td className="small">{c[2]}</td><td className="small"><b>{c[3]}</b></td><td>{c[4] ? <Pill tone="blue">override</Pill> : <Pill>inherited</Pill>}</td></tr>)}</tbody></table>
+            </div>
+          </Card>
+        </div>
+      )}
+      {tab === "Builder" && (
+        <Card title="Policy builder — Retirement income floor (2036) · new draft v2">
+          <div className="row" style={{ gap: 4, flexWrap: "wrap", marginBottom: 14 }}>{["Scope & start", "Risk profile", "Objectives", "Allocation", "Risk limits", "Permitted", "Rebalancing & review", "Guardrails", "Simulate", "Approve & sign"].map((x, i) => <button key={x} className="btn btn-s" style={{ background: i === step ? C.navy : i < step ? C.tealSoft : "#fff", color: i === step ? "#fff" : i < step ? C.teal : C.mute }} onClick={() => setStep(i)}>{i + 1}. {x}</button>)}</div>
+          {step === 1 && (
+            <div className={mobile ? "" : "grid-2"}>
+              <div>
+                <b>Risk questionnaire — 12 questions, 4 dimensions</b>
+                {[["Capacity", "Share of expenses covered by reliable income", "50–100%", 3], ["Capacity", "Months of expenses in cash & liquid", "Over 24", 5], ["Capacity", "Wealth committed to goals within 5 years", "20–50%", 3], ["Tolerance", "If the growth portfolio fell 25% in a year", "Hold and wait", 3], ["Tolerance", "Largest single-year loss you would accept", "10–15%", 3], ["Horizon", "Years until regular income is needed", "5–15", 3]].map((q, i) => <div key={i} className="attn"><Pill>{q[0]}</Pill><div style={{ flex: 1 }} className="small">{q[1]}<div className="mute">{q[2]}</div></div><span className="num mute">{q[3]}/5</span></div>)}
+                <div className="small mute" style={{ marginTop: 6 }}>…6 more. Answered by Arjun on 10 Sep 2026.</div>
+              </div>
+              <div className="src" style={{ alignSelf: "start" }}>
+                <b>Result</b>
+                <table className="tbl tight"><tbody>
+                  <tr><td>Capacity</td><td className="num">64 / 100</td></tr><tr><td>Tolerance</td><td className="num">58 / 100</td></tr><tr><td>Horizon</td><td className="num">48 / 100</td></tr><tr><td>Knowledge</td><td className="num">80 / 100</td></tr>
+                  <tr className="total"><td>Weighted score</td><td className="num">44</td></tr>
+                </tbody></table>
+                <Pill tone="amber">Moderately conservative</Pill>
+                <div className="small mute">Capacity caps tolerance; horizon (10 yrs to drawdown) pulls the band down. Suggested model: 45/40/10/5 with −12% drawdown limit and 36-month liquidity.</div>
+                <div className="row gap"><Btn small primary onClick={() => setStep(2)}>Use suggestion</Btn><Btn small>Adjust</Btn></div>
+              </div>
+            </div>
+          )}
+          {step === 8 && (
+            <div className={mobile ? "" : "grid-2"}>
+              <Card title="Draft v2 vs current portfolio">
+                <table className="tbl tight"><tbody>
+                  <tr><td>Compliance if activated today</td><td><Pill tone="red">1 breach · 1 warning</Pill></td></tr>
+                  <tr><td>Expected return (10 yr)</td><td className="num">7.4% vs objective 5% real + 5% inflation = 10.3% nominal <span className="down">gap −2.9pp</span></td></tr>
+                  <tr><td>Expected volatility</td><td className="num">9.8% (limit 11%)</td></tr>
+                  <tr><td>Moves to comply</td><td className="small">Sell ₹9,400 balanced-advantage → target-maturity debt (LTCG ₹610, within exemption) · redirect goal SIP to debt for 6 months</td></tr>
+                  <tr><td>Tax cost of compliance</td><td className="num">₹0</td></tr>
+                </tbody></table>
+                <div className="small mute" style={{ marginTop: 8 }}>The return gap is a finding, not a blocker: either lower the objective, extend the horizon, or raise the contribution — the builder shows all three.</div>
+              </Card>
+              <Card title="Approve & sign">
+                {[["Reviewed by CA (S. Krishnan)", "done"], ["Approve — Arjun (owner)", "pending"], ["Sign — Arjun, Priya (step-up auth)", "pending"], ["Activate from 1 Oct 2026 → writes targets, bands, rules, guardrails", "pending"]].map(([a, b]) => <div key={a} className="attn">{b === "done" ? <CheckCircle2 size={16} color={C.teal} /> : <Circle size={16} color={C.line} />}<span className="small" style={{ flex: 1 }}>{a}</span></div>)}
+                <div className="row gap" style={{ marginTop: 10 }}><Btn small primary icon={Fingerprint}>Approve and sign</Btn><Btn small icon={ScrollText}>Preview IPS</Btn></div>
+              </Card>
+            </div>
+          )}
+          {step !== 1 && step !== 8 && <div className="empty"><ClipboardCheck size={28} className="mute" /><div>Step {step + 1} — {["Scope & start", "Risk profile", "Objectives", "Allocation", "Risk limits", "Permitted", "Rebalancing & review", "Guardrails", "Simulate", "Approve & sign"][step]}</div><div className="small mute">Pre-filled from the risk profile and the family policy; every field shows the family default beside it. Try steps 2 and 9 for populated examples.</div></div>}
+        </Card>
+      )}
+      {tab === "Allocation & bands" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="Retirement goal — allocation clauses (v1 active)">
+            <table className="tbl tight"><thead><tr><th>Lens · key</th><th className="num">Target</th><th className="num">Band</th><th className="num">Actual</th><th>Status</th></tr></thead>
+              <tbody>
+                {[["Bucket · Income", 55, "45–65", 52.0, "in band"], ["Bucket · Growth", 35, "25–45", 41.8, "in band"], ["Bucket · Liquidity", 10, "8–15", 6.2, "breach"], ["Class · Equity", 45, "35–55", 58.9, "breach"], ["Class · Debt", 40, "30–50", 29.1, "warning"], ["Class · Gold", 5, "3–10", 2.7, "warning"], ["Class · Real estate", 5, "0–15", 6.1, "in band"], ["Class · Cash", 5, "3–10", 3.2, "in band"], ["Geography · India", 90, "80–100", 94.4, "in band"], ["Geography · Global", 10, "0–20", 5.6, "in band"], ["Currency · USD", 8, "0–15", 5.6, "in band"]].map((r) => <tr key={r[0]}><td>{r[0]}</td><td className="num">{r[1]}%</td><td className="num mute">{r[2]}%</td><td className="num">{r[3]}%</td><td><Pill tone={tone(r[4])}>{r[4]}</Pill></td></tr>)}
+              </tbody></table>
+          </Card>
+          <Card title="Glide path (clause) vs actual">
+            <div style={{ height: 200 }}>
+              <ResponsiveContainer><LineChart data={[{ y: "2026", t: 45, a: 58.9 }, { y: "2028", t: 45 }, { y: "2030", t: 45 }, { y: "2031", t: 42 }, { y: "2033", t: 36 }, { y: "2036", t: 27 }]}><CartesianGrid vertical={false} stroke={C.line} /><XAxis dataKey="y" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis unit="%" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} domain={[20, 65]} /><Tooltip /><Line dataKey="t" name="Equity target" stroke={C.violet} strokeWidth={2} dot /><Line dataKey="a" name="Actual" stroke={C.amber} strokeWidth={2} dot /></LineChart></ResponsiveContainer>
+            </div>
+            <div className="small mute">Equity −3pp per year from 2031 as the income floor approaches. Rebalancing: bands + quarterly, new cash first, tax-aware.</div>
+          </Card>
+        </div>
+      )}
+      {tab === "Risk & guardrails" && (
+        <div className={mobile ? "" : "grid-2"}>
+          <Card title="Risk limits — retirement goal">
+            <table className="tbl tight"><thead><tr><th>Metric</th><th className="num">Limit</th><th className="num">Warn</th><th className="num">Now</th><th>Status</th></tr></thead>
+              <tbody>
+                {[["Max drawdown (1y)", "≥ −12%", "−9%", "−9.4%", "warning"], ["Volatility (1y)", "≤ 14%", "11%", "12.6%", "warning"], ["VaR 95% (1m)", "≤ 4%", "3%", "2.8%", "in band"], ["Beta vs Nifty 50", "≤ 0.7", "0.6", "0.66", "warning"], ["Tracking error vs 45/45/10", "≤ 3%", "2%", "1.7%", "in band"], ["Sharpe (3y)", "≥ 0.6", "0.8", "0.91", "in band"], ["Top-5 concentration", "≤ 40%", "35%", "31%", "in band"], ["Max single issuer", "≤ 10%", "8%", "8.1%", "warning"], ["Illiquid share", "≤ 10%", "8%", "4.4%", "in band"], ["Liquidity coverage", "≥ 36 mo", "42", "41", "warning"], ["Unrated debt", "≤ 0%", "—", "0%", "in band"], ["FX exposure", "≤ 15%", "12%", "5.6%", "in band"]].map((r) => <tr key={r[0]}><td>{r[0]}</td><td className="num">{r[1]}</td><td className="num mute">{r[2]}</td><td className="num">{r[3]}</td><td><Pill tone={tone(r[4])}>{r[4]}</Pill></td></tr>)}
+              </tbody></table>
+          </Card>
+          <Card title="Guardrails written to the action plane">
+            {[["Prohibited: F&O, crypto, unrated debt, single stocks > 5%", "assistant refuses; approval blocked"], ["Equity band 35–55%", "any intent that worsens a breach fails the policy check"], ["Min rating AA+ on new debt", "checked on instrument attributes at proposal"], ["Approval tiers", "≤ ₹5 L one approver · ≤ ₹25 L two · above: two + 30-min cooling-off"], ["Daily cap ₹10 L · monthly ₹50 L", "execution_policies rows owned by policy v1"], ["Tax preferences", "planner and optimiser: direct plans, LTCG-first, use both exemptions"]].map(([a, b]) => <div key={a} className="attn"><ShieldCheck size={14} color={C.teal} /><div style={{ flex: 1 }}><b className="small">{a}</b><div className="small mute">{b}</div></div></div>)}
+            <div className="small mute" style={{ marginTop: 8 }}>Guardrails cannot be loosened in Action plane settings; they change only through a policy amendment with approval and signature.</div>
+          </Card>
+        </div>
+      )}
+      {tab === "Compliance" && (
+        <Card title="Nightly compliance — Retirement income floor · 11 Sep 2026" action={<div className="row gap"><Pill tone="red">breach</Pill><Btn small>Evaluate now</Btn><Btn small icon={Download}>History</Btn></div>}>
+          <table className="tbl"><thead><tr><th>Check</th><th>Clause</th><th className="num">Target</th><th className="num">Actual</th><th>Status</th><th>Detail</th></tr></thead>
+            <tbody>{COMPLIANCE.map((c, i) => <tr key={i}><td className="mute">{c[0]}</td><td>{c[1]}</td><td className="num">{c[2]}</td><td className="num">{c[3]}</td><td><Pill tone={tone(c[4])}>{c[4]}</Pill></td><td className="small mute">{c[5]}</td></tr>)}</tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Breach open 31 days → trigger review opened 12 Oct (see Reviews). Rebalancing task #52 proposes tax-aware moves; the assistant can draft them as intents.</div>
+        </Card>
+      )}
+      {tab === "Reviews" && (
+        <Card title="Reviews" action={<Btn small icon={Plus}>Ad-hoc review</Btn>}>
+          <table className="tbl"><thead><tr><th>Kind</th><th>Review</th><th>Due / done</th><th>Status</th><th>Reviewer</th></tr></thead>
+            <tbody>{REVIEWS.map((r, i) => <tr key={i}><td><Pill tone={r[0] === "Trigger" ? "amber" : "mute"}>{r[0]}</Pill></td><td><b>{r[1]}</b></td><td>{r[2]}</td><td className="small">{r[3]}</td><td className="small mute">{r[4]}</td></tr>)}</tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Findings are pre-filled: compliance history, drift and metric trends, goal progress, life events since the last review. Outcome: no change (resets the date), amended (new draft with diff), or superseded. Triggers: breach persisting 30 days, drawdown beyond clause, goal change, new entity, regulation flag.</div>
+        </Card>
+      )}
+      {tab === "Document" && (
+        <Card title="Investment Policy Statement — Retirement income floor · v1" action={<div className="row gap"><Btn small icon={Download}>PDF</Btn><Btn small>Diff vs family v3</Btn></div>}>
+          <div className="src" style={{ fontFamily: "Georgia, serif", lineHeight: 1.6 }}>
+            <b>1. Purpose.</b> This policy governs the assets set aside to provide the Mehta family's retirement income floor from 2036, held in Mehta HUF and Arjun Mehta's name.<br />
+            <b>2. Objectives.</b> A return of 5% per annum above inflation over a 10-year horizon, sufficient to fund ₹9.5 L per annum (today's money) from 2036.<br />
+            <b>3. Risk.</b> Profile: moderately conservative (score 44, capacity 64, tolerance 58). The family accepts a maximum peak-to-trough decline of 12% in any year.<br />
+            <b>4. Strategic allocation.</b> Equity 45% (35–55), Debt 40% (30–50), Gold 5% (3–10), Real estate 5% (0–15), Cash 5% (3–10); Global ≤ 20%; equity reduces 3pp per year from 2031.<br />
+            <b>5. Constraints.</b> 36 months of expenses in liquid assets at all times; direct plans; long-term gains realised first; both entities' exemptions used each year.<br />
+            <b>6. Permitted.</b> Listed equity and ETFs, mutual funds, listed bonds rated AA+ or better, G-Secs and T-bills, gold ETFs and SGBs, REITs. Prohibited: derivatives, crypto assets, unrated debt, single stocks above 5%.<br />
+            <b>7. Concentration.</b> No issuer above 10%, no manager above 25%, illiquid assets at most 10%.<br />
+            <b>8. Rebalancing.</b> When any band is breached and at each quarter-end; new contributions first; sales sequenced to minimise tax.<br />
+            <b>9. Monitoring and review.</b> Benchmark 45/45/10 blend; tracking error ≤ 3%; quarterly compliance report to the principal and CA; annual review each December or on trigger.<br />
+            <b>10. Guardrails.</b> Execution requires approval per the family tiers; prohibited instruments cannot be proposed or approved.<br />
+            <span className="small mute">Approved by Arjun Mehta (owner) on 15 Jun 2026 · Signed: Arjun Mehta, Priya Mehta · Reviewed: S. Krishnan, CA · Change log: v1 initial.</span>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+};
+
+
+/* ---------- research & proposals ---------- */
+const INBOX = [
+  ["11 Sep 08:10", "email", "Motilal Oswal — India Strategy: Capex cycle, top picks Sept", "Motilal Oswal (broker)", 4, "extracted"],
+  ["10 Sep 21:40", "whatsapp", "Ravi: \"Bro, XYZ Small Cap Infra is going to double, my CA's friend is on the board\"", "Ravi (friend)", 1, "dismissed · prohibited"],
+  ["10 Sep 16:02", "upload", "Marcellus — Consistent Compounders Q2 letter.pdf", "Marcellus (PMS manager)", 2, "extracted"],
+  ["09 Sep 09:15", "email", "Capitalmind Premium — The case for arbitrage funds now", "Capitalmind (research house)", 1, "proposal drafted"],
+  ["08 Sep 18:30", "email", "Kotak Securities — Dalal Street Morning Note", "Kotak Securities (broker)", 6, "extracted · 4 dismissed"],
+  ["07 Sep 11:00", "rss", "RBI monetary policy — rate held; stance neutral", "RBI (media)", 0, "no recommendation"],
+];
+const CLUSTERS = [
+  { id: "c1", inst: "Larsen & Toubro", dir: "bullish", n: 3, cons: "3 of 3 bullish (Motilal, Kotak, Marcellus letter mentions)", conv: 74, verdict: "fits with conditions", fit: 71, detail: "Not held · equity band would move 58.9→59.6% (breach already open) · issuer headroom ₹9,400 · large-cap, permitted" },
+  { id: "c2", inst: "Kotak Equity Arbitrage Fund", dir: "bullish", n: 1, cons: "Capitalmind: arbitrage spreads at 12-month high", conv: 68, verdict: "fits", fit: 88, detail: "Matches working-capital ladder · Liquidity bucket under target · no tax friction" },
+  { id: "c3", inst: "XYZ Small Cap Infra Ltd", dir: "bullish", n: 1, cons: "Friend (low trust, no thesis)", conv: 12, verdict: "prohibited", fit: 0, detail: "Clause 6: single stocks < ₹500 Cr market cap prohibited; no independent thesis; possible insider information — do not act" },
+  { id: "c4", inst: "HDFC Bank", dir: "bearish", n: 1, cons: "Kotak: reduce on NIM pressure", conv: 41, verdict: "conflicts", fit: 35, detail: "Held 8.1% (Arjun); a sell would realise LTCG ₹1,100 above exemption headroom; policy says LTCG-first only within exemption — surfaced because it is a sell on a held position" },
+  { id: "c5", inst: "Tata Motors", dir: "bullish", n: 2, cons: "2 brokers bullish; both earn brokerage", conv: 49, verdict: "fits with conditions", fit: 58, detail: "Auto sector would reach 9.2% (cap 10%) · no counter-view yet" },
+];
+const PROPOSAL = {
+  title: "Add Larsen & Toubro to Growth bucket — ₹9,000 (Arjun)", status: "in review",
+  summary: "Three independent sources are constructive on L&T over 12–24 months on the capex cycle; the position fits the family policy with one condition (equity band already breached — fund from the balanced-advantage sale planned in Rebalance task #52, not from cash).",
+  thesis: "Order book at 3.1× revenue, margin recovery in core E&C, Middle East exposure diversifying domestic risk. Motilal target ₹4,300 (18% upside); Kotak ₹4,150; Marcellus holds it as a compounder.",
+  counter: "Bear case (constructed): hydrocarbon order lumpiness and working-capital intensity; if capex cycle stalls on fiscal consolidation, valuation at 32× trailing has 20% downside. Source-tracked: Motilal's large-cap infra calls hit 55% at 12 months (+2.3% excess); Kotak 47% (−0.8%).",
+  fit: [["Permitted (listed large-cap)", "pass"], ["Equity band 35–55 (goal) / 50–70 (family)", "warning · family lens 59.6% after; funded by a sale it is neutral"], ["Issuer cap 10%", "pass · 3.4% after"], ["Sector cap 25% (industrials)", "pass · 11%"], ["Tax preference", "pass · no realisation needed if funded from planned sale"]],
+  impact: "Growth bucket +0.3pp · industrials 8.7→11.0% · top-5 concentration 31→32% · cash unchanged (funded from sale) · tax ₹0",
+  sizing: "Policy headroom ₹9,400 (issuer cap on a ₹2.65 L equity book) → propose ₹9,000 in two tranches",
+  exec: ["Tranche 1: ₹4,500 limit at ≤ ₹3,650, ICICI Breeze (Arjun) — after balanced-advantage redemption settles", "Tranche 2: ₹4,500 on a 5% pullback or in 30 days, whichever first"],
+  exit: "Target ₹4,300 · review if order inflow growth < 10% for two quarters · stop review at −18% · horizon 24 months",
+  monitor: ["Quarterly order book and margin", "Sector cap 25%", "Cluster consensus turning bearish"],
+};
+const DIGEST_PROPOSALS = [
+  { t: "Add L&T ₹9,000 (Arjun) — fits with conditions", fit: 71, d: "pending" },
+  { t: "Shift ₹14,000 idle cash to Kotak Arbitrage (Arjun) — fits", fit: 88, d: "pending" },
+  { t: "Tata Motors ₹6,000 — fits with conditions, no counter-view", fit: 58, d: "defer · request bear case" },
+];
+const LEADER = [
+  ["Capitalmind (research house)", "none", 23, "65%", "+3.8%"], ["Marcellus (PMS manager)", "manages PMS held", 11, "64%", "+4.1%"], ["Motilal Oswal (broker)", "earns brokerage", 41, "55%", "+2.3%"], ["Kotak Securities (broker)", "earns brokerage", 58, "47%", "−0.8%"], ["Ravi (friend)", "—", 7, "29%", "−6.4%"],
+];
+const Research = ({ mobile }) => {
+  const [tab, setTab] = useState("Digest");
+  const [sel, setSel] = useState("c1");
+  const cl = CLUSTERS.find((x) => x.id === sel);
+  const vt = (v) => v === "fits" ? "teal" : v.startsWith("fits") ? "amber" : v === "prohibited" ? "red" : v === "conflicts" ? "red" : "mute";
+  return (
+    <>
+      <div className="tabs">{["Inbox", "Recommendations", "Proposal", "Digest", "Sources & track record"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "Inbox" && (
+        <Card title="Research inbox — last 7 days" action={<div className="row gap"><Pill tone="teal">6 items · 14 recommendations</Pill><Btn small icon={Upload}>Upload / paste</Btn></div>}>
+          <table className="tbl"><thead><tr><th>Received</th><th>Channel</th><th>Item</th><th>Source</th><th className="num">Recs</th><th>Status</th></tr></thead>
+            <tbody>{INBOX.map((r, i) => <tr key={i}><td className="small mute">{r[0]}</td><td><Pill>{r[1]}</Pill></td><td><b>{r[2]}</b></td><td className="small">{r[3]}</td><td className="num">{r[4]}</td><td className="small">{r[5]}</td></tr>)}</tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Channels: research-7f3a@ingest… (allow-listed senders), WhatsApp inbox +91 98… (forward tips), RSS × 3, upload/paste. Duplicates are dropped by content hash; unattributed senders go to triage.</div>
+        </Card>
+      )}
+      {tab === "Recommendations" && (
+        <div className={mobile ? "" : "grid-rep"}>
+          <Card title="Clusters (instrument × direction, across sources)">
+            {CLUSTERS.map((c) => <div key={c.id} className={`rep ${c.id === sel ? "on" : ""}`} onClick={() => setSel(c.id)}><div className="row" style={{ justifyContent: "space-between" }}><b>{c.inst}</b><Pill tone={vt(c.verdict)}>{c.verdict}</Pill></div><div className="small mute">{c.dir} · {c.n} source{c.n > 1 ? "s" : ""} · conviction {c.conv} · fit {c.fit}</div></div>)}
+          </Card>
+          <Card title={`${cl.inst} — ${cl.dir}`} action={<div className="row gap">{cl.verdict.startsWith("fits") && <Btn small primary>Draft proposal</Btn>}<Btn small>Dismiss</Btn></div>}>
+            <table className="tbl tight"><tbody>
+              <tr><td className="mute">Consensus</td><td>{cl.cons}</td></tr>
+              <tr><td className="mute">Trust-weighted conviction</td><td>{cl.conv} / 100</td></tr>
+              <tr><td className="mute">Policy-fit assessment</td><td><Pill tone={vt(cl.verdict)}>{cl.verdict}</Pill> <span className="small">score {cl.fit}</span></td></tr>
+              <tr><td className="mute">Detail</td><td className="small">{cl.detail}</td></tr>
+            </tbody></table>
+            {cl.id === "c3" && <div className="attn" style={{ borderBottom: 0 }}><AlertTriangle size={14} color={C.red} /><span className="small">Dismissed automatically and recorded in the digest's declined list with the clause. The agent cannot draft a proposal for a prohibited instrument.</span></div>}
+            {cl.id === "c4" && <div className="attn" style={{ borderBottom: 0 }}><AlertTriangle size={14} color={C.amber} /><span className="small">Sell calls on held positions always surface. The planner can model a partial sale within the exemption if you want it as a proposal.</span></div>}
+          </Card>
+        </div>
+      )}
+      {tab === "Proposal" && (
+        <Card title={PROPOSAL.title} action={<div className="row gap"><Pill tone="amber">{PROPOSAL.status}</Pill><Btn small icon={Download}>Memo PDF</Btn><Btn small><ThumbsDown size={13} /> Reject</Btn><Btn small><Clock size={13} /> Defer</Btn><Btn small primary><ThumbsUp size={13} /> Approve → intents</Btn></div>}>
+          <div className={mobile ? "" : "grid-2"}>
+            <div>
+              <b>Summary</b><div className="small" style={{ marginBottom: 8 }}>{PROPOSAL.summary}</div>
+              <b>Thesis</b><div className="small" style={{ marginBottom: 8 }}>{PROPOSAL.thesis}</div>
+              <b>Counter-view</b><div className="small" style={{ marginBottom: 8 }}>{PROPOSAL.counter}</div>
+              <b>Sizing</b><div className="small" style={{ marginBottom: 8 }}>{PROPOSAL.sizing}</div>
+            </div>
+            <div>
+              <b>Policy fit</b>
+              {PROPOSAL.fit.map(([a, b]) => <div key={a} className="attn"><ShieldCheck size={14} color={b.startsWith("pass") ? C.teal : C.amber} /><div style={{ flex: 1 }} className="small">{a}<div className="mute">{b}</div></div></div>)}
+              <b style={{ display: "block", marginTop: 8 }}>Portfolio & tax impact</b><div className="small" style={{ marginBottom: 8 }}>{PROPOSAL.impact}</div>
+              <b>Execution plan</b>{PROPOSAL.exec.map((e, i) => <div key={i} className="small">• {e}</div>)}
+              <b style={{ display: "block", marginTop: 8 }}>Exit plan</b><div className="small">{PROPOSAL.exit}</div>
+              <b style={{ display: "block", marginTop: 8 }}>Monitoring triggers</b>{PROPOSAL.monitor.map((e, i) => <div key={i} className="small">• {e}</div>)}
+            </div>
+          </div>
+          <div className="small mute" style={{ marginTop: 10 }}>Drafted by the research agent (claude-sonnet) from 3 items, the effective policy v3/v1 and planner simulation; every figure cites its tool result. Internal decision memo for the family's own money — not investment advice to third parties. Approval creates two intents that still pass the action plane's policy check and approval.</div>
+        </Card>
+      )}
+      {tab === "Digest" && (
+        <>
+          <div className={`kpis ${mobile ? "kpis-m" : ""}`} style={{ gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(5,1fr)" }}>
+            <Card><div className="mute">Week of 5–11 Sep</div><div className="big-num">6 items</div><div className="small mute">14 recommendations · 5 clusters</div></Card>
+            <Card><div className="mute">Declined</div><div className="big-num">9</div><div className="small mute">1 prohibited · 4 already held at target · 3 conflicts · 1 no thesis</div></Card>
+            <Card><div className="mute">Proposals</div><div className="big-num">3</div><div className="small mute">2 to decide · 1 deferred</div></Card>
+            <Card><div className="mute">Themes</div><div className="small" style={{ marginTop: 6 }}>Capex cycle · arbitrage spreads · NIM pressure in banks</div></Card>
+            <Card><div className="mute">Source movement</div><div className="small" style={{ marginTop: 6 }}>Capitalmind ↑ 61→65% · Kotak ↓ 49→47%</div></Card>
+          </div>
+          <Card title="Call to action — decide with one step-up" action={<Btn small primary icon={Fingerprint}>Submit decisions</Btn>}>
+            {DIGEST_PROPOSALS.map((p, i) => <div key={i} className="attn"><Inbox size={14} className="mute" /><div style={{ flex: 1 }}><b>{p.t}</b><div className="small mute">fit score {p.fit}</div></div><div className="row gap"><Btn small><ThumbsUp size={13} /> Approve</Btn><Btn small><ThumbsDown size={13} /> Reject</Btn><Btn small><Clock size={13} /> Defer</Btn></div><Pill tone={p.d === "pending" ? "amber" : "mute"}>{p.d}</Pill></div>)}
+            <div className="small mute" style={{ marginTop: 10 }}>Declined items are listed with reasons so nothing is silently dropped. Approved proposals become intent batches in the Action plane; deferred ones return next digest. Sent Sundays 07:00 to Arjun, Priya; monthly copy to the CA.</div>
+          </Card>
+        </>
+      )}
+      {tab === "Sources & track record" && (
+        <Card title="Source leaderboard — 12-month horizon" action={<Btn small icon={Plus}>Add source</Btn>}>
+          <table className="tbl"><thead><tr><th>Source</th><th>Conflict of interest</th><th className="num">Calls</th><th className="num">Hit rate</th><th className="num">Excess vs benchmark</th></tr></thead>
+            <tbody>{LEADER.map((r, i) => <tr key={i}><td><b>{r[0]}</b></td><td className="small">{r[1]}</td><td className="num">{r[2]}</td><td className="num">{r[3]}</td><td className={`num ${r[4].startsWith("+") ? "up" : "down"}`}>{r[4]}</td></tr>)}</tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Every recommendation is scored at 3, 6, 12 and 24 months against price and a benchmark; trust scores weight the consensus and are shown on every proposal. Friends start at low trust and are never proposed without an independent thesis.</div>
+        </Card>
+      )}
+    </>
+  );
+};
+
+
+/* ---------- rebalancing & liquidity timing ---------- */
+const PROGRAMS = [
+  { n: "Family policy program", scope: "Family", trig: "Quarterly (1st business day) · band breach · tax year-end · large flow > 5%", cons: "min ₹2,000 · turnover ≤ 15%/run · avoid exit loads · tax-aware · LTCG wait ≤ 45 d", next: "1 Oct 2026", last: "1 Jul 2026 · no action" },
+  { n: "Retirement income floor", scope: "Goal", trig: "Milestones: 10 → 5 → 3 yrs to go · glide step · need in 120 d", cons: "new SIPs first for 6 months before any sale", next: "milestone 2031", last: "15 Jun 2026 · plan v1 converted" },
+  { n: "Daughter's MBA (2029)", scope: "Goal", trig: "Milestone: 3 yrs to go (Aug 2026 — fired) · 1 yr · need in 180 d", cons: "no equity sales within 30 d of LTCG date", next: "Aug 2028", last: "12 Aug 2026 · plan v2 approved" },
+];
+const NEEDS = [
+  { d: "15 Sep 2026", k: "tax", l: "Advance tax Q2 — all entities", amt: 9400, pr: 1, cov: "cash ₹9,400 (ICICI ••0928)", st: "funded" },
+  { d: "20 Sep 2026", k: "gst", l: "GSTR-3B Aug — 2 GSTINs", amt: 810, pr: 1, cov: "cash", st: "funded" },
+  { d: "01 Oct 2026", k: "expense", l: "School fees term 2", amt: 3200, pr: 2, cov: "cash (HDFC ••4471)", st: "funded" },
+  { d: "14 Oct 2026", k: "capital call", l: "Varaha Angel Fund II drawdown 4/6", amt: 20000, pr: 1, cov: "cash ₹10,600 + move #2 ₹9,400 (settles 10 Oct)", st: "planned" },
+  { d: "15 Dec 2026", k: "tax", l: "Advance tax Q3", amt: 10230, pr: 1, cov: "ICICI Liquid ₹7,000 (T+1) + shortfall ₹3,230", st: "partially funded" },
+  { d: "05 Jan 2027", k: "premium", l: "Term life premium — Arjun", amt: 1840, pr: 2, cov: "cash", st: "planned" },
+  { d: "Jun 2029", k: "goal drawdown", l: "MBA tuition year 1", amt: 80000, pr: 2, cov: "goal assets ₹1.09 L (68% funded)", st: "planned" },
+];
+const MOVES = [
+  { s: 1, k: "hold cash", w: "Keep ₹10,600 in ICICI ••0928 for Varaha call", amt: 10600, e: "HUF", d: "—", set: "—", why: "need: Varaha 14 Oct", tax: "—", chk: ["idle above float · reserved"] },
+  { s: 2, k: "redeem", w: "Redeem 41.2 u HDFC Balanced Advantage (lot 02 Nov 2025)", amt: 9400, e: "HUF", d: "07 Oct", set: "10 Oct (T+3)", why: "need: Varaha 14 Oct · equity band breach", tax: "LTCG ₹610 within exemption → ₹0", chk: ["exit load 1% until 02 Oct → wait", "LTCG eligible 02 Nov 2026? no — lot is equity-oriented: eligible after 12 m → 02 Nov 2026 ✗", "solver picked lot 10 Jan 2024 instead (LTCG-eligible, no exit load)", "settles 10 Oct ≤ need − 2 d buffer ✓"] },
+  { s: 3, k: "sip change", w: "Redirect ₹2,000 monthly SIP: Flexi Cap → ICICI Liquid (6 months)", amt: 12000, e: "HUF", d: "10 Oct", set: "monthly", why: "band: Liquidity −1.8pp · new cash first", tax: "none", chk: ["policy: prefer_new_cash ✓", "no sale needed"] },
+  { s: 4, k: "buy", w: "Buy 91-day T-bill", amt: 3230, e: "HUF", d: "13 Oct", set: "T+1", why: "need: advance tax 15 Dec (shortfall)", tax: "slab on maturity", chk: ["matures 12 Jan 2027 — after need ✗", "solver: use 61-day CMB or liquid fund → switched to liquid fund"] },
+  { s: 5, k: "sell", w: "Sell 4 TCS (Spouse) within LTCG exemption", amt: 15155, e: "Spouse", d: "20 Mar 2027", set: "T+1", why: "tax year-end: use ₹1,250 exemption", tax: "LTCG ₹1,250 → ₹0", chk: ["lot 22 May 2023 LTCG-eligible ✓", "re-buy 21 Mar (plan action)"] },
+  { s: 6, k: "sell", w: "Trim HDFC Bank 3 shares (Arjun)", amt: 5170, e: "Arjun", d: "03 Apr 2027", set: "T+1", why: "band: equity 58.9% → 55% · deferred to next FY exemption", tax: "LTCG ₹1,700 → ₹0 in FY27-28", chk: ["exemption FY26-27 exhausted by TCS sale → deferred", "bonus lot 28 Aug 2026 not LTCG-eligible → uses 2022 lot"] },
+];
+const CAL = [
+  ["15 Sep", "need", "Advance tax Q2 ₹9,400 — funded"], ["20 Sep", "need", "GSTR-3B ₹810"], ["01 Oct", "calendar run", "Family program — quarterly"], ["02 Oct", "exit load expiry", "HDFC Balanced Advantage lot 02 Nov 2025"], ["07 Oct", "move", "#2 Redeem BAF ₹9,400"], ["10 Oct", "settlement", "#2 settles → Varaha reserved"], ["10 Oct", "move", "#3 SIP redirect starts"], ["13 Oct", "move", "#4 Liquid fund ₹3,230"], ["14 Oct", "need", "Varaha drawdown ₹20,000 — covered"], ["02 Nov", "LTCG eligible", "BAF lot 02 Nov 2025"], ["15 Dec", "need", "Advance tax Q3 ₹10,230"], ["09 Jan", "LTCG eligible", "SBI bond lot (10 units)"], ["20 Mar", "move", "#5 TCS exemption sale"], ["03 Apr", "move", "#6 HDFC Bank trim (new FY)"], ["Aug 2028", "milestone", "MBA goal: 1 year to go → program run"], ["2031", "milestone", "Retirement: 5 yrs to go → equity −10pp"],
+];
+const Rebalancing = ({ mobile }) => {
+  const [tab, setTab] = useState("Plan");
+  const [sel, setSel] = useState(2);
+  const mv = MOVES.find((m) => m.s === sel);
+  const st = (x) => x === "funded" ? "teal" : x === "partially funded" ? "amber" : x === "planned" ? "blue" : "mute";
+  return (
+    <>
+      <div className="tabs">{["Programs & triggers", "Funding needs", "Plan", "Calendar", "History"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {tab === "Programs & triggers" && (
+        <Card title="Rebalancing programs" action={<Btn small primary icon={Plus}>New program</Btn>}>
+          <table className="tbl"><thead><tr><th>Program</th><th>Scope</th><th>Triggers</th><th>Constraints</th><th>Next</th><th>Last run</th></tr></thead>
+            <tbody>{PROGRAMS.map((p) => <tr key={p.n}><td><b>{p.n}</b></td><td><Pill>{p.scope}</Pill></td><td className="small">{p.trig}</td><td className="small mute">{p.cons}</td><td className="small">{p.next}</td><td className="small mute">{p.last}</td></tr>)}</tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Triggers: calendar (RRULE), band breach, drift threshold, milestones (years-to-go, funded %, glide step, life event, net-worth crossing, age), funding need inside the look-ahead, large inflow/outflow, tax year-end, policy change, manual. Programs are owned by the policy's rebalancing clause.</div>
+        </Card>
+      )}
+      {tab === "Funding needs" && (
+        <Card title="Dated funding needs — next 3 years (auto-gathered + manual)" action={<div className="row gap"><Pill tone="amber">1 partially funded</Pill><Btn small icon={Plus}>Add need</Btn></div>}>
+          <table className="tbl"><thead><tr><th>Need date</th><th>Kind</th><th>Need</th><th className="num">Amount</th><th>Priority</th><th>Coverage</th><th>Status</th></tr></thead>
+            <tbody>{NEEDS.map((n, i) => <tr key={i}><td>{n.d}</td><td><Pill>{n.k}</Pill></td><td><b>{n.l}</b></td><td className="num">₹{n.amt.toLocaleString("en-IN")}</td><td className="num">{n.pr === 1 ? "hard" : "firm"}</td><td className="small">{n.cov}</td><td><Pill tone={st(n.st)}>{n.st}</Pill></td></tr>)}</tbody></table>
+          <div className="small mute" style={{ marginTop: 10 }}>Sources: goal drawdown schedules, fund commitment schedules, advance tax and GST from the planner, EMIs and maturities, premiums, planned expenses from the cash-flow forecast, float rebuilds, manual. The engine funds needs in priority order: idle cash → maturities → redirected SIPs → tax-aware sales, timed to settle before the date.</div>
+        </Card>
+      )}
+      {tab === "Plan" && (
+        <>
+          <div className={`kpis ${mobile ? "kpis-m" : ""}`} style={{ gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(5,1fr)" }}>
+            <Card><div className="mute">Run · 11 Sep 02:10</div><div className="small" style={{ marginTop: 6 }}>Trigger: <b>funding need</b> (Varaha in 33 d) + band breach (equity)</div></Card>
+            <Card><div className="mute">Objective</div><div className="big-num" style={{ fontSize: 16 }}>Needs + bands</div></Card>
+            <Card><div className="mute">Turnover</div><div className="big-num">₹44,955</div><div className="small mute">8.7% of scope (cap 15%)</div></Card>
+            <Card><div className="mute">Est. tax</div><div className="big-num up">₹0</div><div className="small mute">₹3,560 of gains inside exemptions</div></Card>
+            <Card><div className="mute">After plan</div><div className="small" style={{ marginTop: 6 }}>Needs covered 5/5 in window · max drift 1.1pp · compliance: <Pill tone="teal">compliant</Pill></div></Card>
+          </div>
+          <div className={mobile ? "" : "grid-rep"}>
+            <Card title="Plan v1 — timed moves" action={<div className="row gap"><Pill tone="amber">in review</Pill><Btn small>Edit</Btn><Btn small primary icon={Fingerprint}>Approve → scheduled intents</Btn></div>}>
+              {MOVES.map((m) => <div key={m.s} className={`rep ${m.s === sel ? "on" : ""}`} onClick={() => setSel(m.s)}><div className="row" style={{ justifyContent: "space-between" }}><b>#{m.s} · {m.w}</b><span className="num">₹{m.amt.toLocaleString("en-IN")}</span></div><div className="row gap small mute"><Pill>{m.k}</Pill><span>{m.e}</span><span>·</span><span><CalendarDays size={11} /> {m.d}</span><span>·</span><span>{m.why}</span></div></div>)}
+            </Card>
+            <Card title={`Move #${mv.s} — ${mv.w}`}>
+              <table className="tbl tight"><tbody>
+                <tr><td className="mute">Planned date · settles</td><td>{mv.d} · {mv.set}</td></tr>
+                <tr><td className="mute">Reason</td><td>{mv.why}</td></tr>
+                <tr><td className="mute">Tax</td><td>{mv.tax}</td></tr>
+                <tr><td className="mute">Window</td><td className="small">earliest = constraints clear · latest = need − settlement − 2 d buffer · planned = latest feasible (stays invested longest)</td></tr>
+              </tbody></table>
+              <b className="small">Constraint checks (solver trace)</b>
+              {mv.chk.map((c, i) => <div key={i} className="attn"><Scale size={13} color={c.includes("✗") ? C.amber : C.teal} /><span className="small">{c}</span></div>)}
+              <div className="small mute" style={{ marginTop: 8 }}>Approving converts moves into action-plane intents held by the executor until each planned date; moves without a connector become assisted instructions dated the same way.</div>
+            </Card>
+          </div>
+        </>
+      )}
+      {tab === "Calendar" && (
+        <Card title="Timing calendar — moves, settlements, needs, runs, milestones, lot gates" action={<Btn small icon={Download}>Funding calendar</Btn>}>
+          <table className="tbl"><thead><tr><th>Date</th><th>Kind</th><th>Item</th></tr></thead>
+            <tbody>{CAL.map((r, i) => <tr key={i}><td className="num" style={{ textAlign: "left", width: 90 }}>{r[0]}</td><td><Pill tone={r[1] === "need" ? "amber" : r[1] === "move" ? "blue" : r[1] === "milestone" ? "teal" : "mute"}>{r[1]}</Pill></td><td>{r[2]}</td></tr>)}</tbody></table>
+        </Card>
+      )}
+      {tab === "History" && (
+        <Card title="Runs — last 12 months">
+          <table className="tbl"><thead><tr><th>Run</th><th>Program</th><th>Trigger</th><th>Outcome</th><th className="num">Turnover</th><th className="num">Tax</th></tr></thead>
+            <tbody>
+              <tr><td>11 Sep 2026</td><td>Family</td><td>funding need + band</td><td><Pill tone="amber">plan v1 in review</Pill></td><td className="num">₹44,955</td><td className="num">₹0</td></tr>
+              <tr><td>12 Aug 2026</td><td>MBA goal</td><td>milestone: 3 yrs to go</td><td><Pill tone="teal">plan v2 converted · 3/3 executed</Pill></td><td className="num">₹18,000</td><td className="num">₹0</td></tr>
+              <tr><td>01 Jul 2026</td><td>Family</td><td>calendar</td><td><Pill>no action · drift 0.9pp</Pill></td><td className="num">—</td><td className="num">—</td></tr>
+              <tr><td>15 Jun 2026</td><td>Retirement</td><td>policy change (v1 active)</td><td><Pill tone="teal">plan v1 converted · 4/4 executed</Pill></td><td className="num">₹22,400</td><td className="num">₹85</td></tr>
+              <tr><td>18 Mar 2026</td><td>Family</td><td>tax year-end</td><td><Pill tone="teal">plan v1 converted · 2/2 executed</Pill></td><td className="num">₹9,800</td><td className="num">₹0</td></tr>
+              <tr><td>01 Apr 2026</td><td>Family</td><td>calendar</td><td><Pill>no action</Pill></td><td className="num">—</td><td className="num">—</td></tr>
+            </tbody></table>
+        </Card>
+      )}
+    </>
+  );
+};
+
+/* ---------- shell ---------- */
+const NAV = [
+  ["Dashboard", LayoutDashboard, Dashboard], ["Investments", TrendingUp, Investments], ["Real estate", Building2, RealEstate],
+  ["Startups", Rocket, Startups], ["Goals & buckets", Target, Goals], ["Investment policy", ScrollText, Policy], ["Rebalancing", Scale, Rebalancing], ["Research", Newspaper, Research], ["Planning & tax", Calculator, Planning], ["Books", BookOpen, Books], ["Action plane", Zap, ActionPlane], ["Banking", Landmark, Banking],
+  ["Working capital", Droplets, WorkingCapital], ["Reports", FileText, Reports], ["Documents", FolderOpen, Documents], ["Product map", Settings, Flow],
+];
+
+export default function App() {
+  const [screen, setScreen] = useState(0);
+  const [entity, setEntity] = useState(0);
+  const [mobile, setMobile] = useState(false);
+  const [menu, setMenu] = useState(false);
+  useEffect(() => {
+    const l = document.createElement("link"); l.rel = "stylesheet";
+    l.href = "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap";
+    document.head.appendChild(l); return () => l.remove();
+  }, []);
+  const [label, , Screen] = NAV[screen];
+
+  const shell = (
+    <div className={`app ${mobile ? "app-m" : ""}`}>
+      {!mobile && (
+        <aside className="rail">
+          <div className="brand"><div className="brand-mark" />Family Office</div>
+          <select className="entity" value={entity} onChange={(e) => setEntity(+e.target.value)}>{ENTITIES.map((e, i) => <option key={e} value={i}>{e}</option>)}</select>
+          <nav>{NAV.map(([n, I], i) => <button key={n} className={i === screen ? "on" : ""} onClick={() => setScreen(i)}><I size={16} />{n}</button>)}</nav>
+          <div className="rail-foot"><div className="small">Last full sync 10:41 IST</div><div className="small">AMFI · NSE · AA feed · CAS</div></div>
+        </aside>
+      )}
+      <main>
+        <header className="top">
+          {mobile ? <button className="icon" onClick={() => setMenu(true)}><Menu size={18} /></button> : null}
+          <h1>{label}</h1>
+          {!mobile && <div className="search top-search"><Search size={13} /><span className="mute">Search assets, tenants, transactions</span></div>}
+          <div className="row gap">
+            {mobile && <select className="entity entity-m" value={entity} onChange={(e) => setEntity(+e.target.value)}>{ENTITIES.map((e, i) => <option key={e} value={i}>{e.split(" ")[0]}</option>)}</select>}
+            <button className="icon"><Bell size={16} /><span className="badge">3</span></button>
+            <div className="avatar">A</div>
+          </div>
+        </header>
+        <div className="content"><Screen mobile={mobile} /></div>
+        {mobile && (
+          <nav className="tabbar">{NAV.slice(0, 4).map(([n, I], i) => <button key={n} className={i === screen ? "on" : ""} onClick={() => setScreen(i)}><I size={18} /><span>{n.split(" ")[0]}</span></button>)}<button className={screen >= 4 ? "on" : ""} onClick={() => setMenu(true)}><Menu size={18} /><span>More</span></button></nav>
+        )}
+        {mobile && menu && (
+          <div className="sheet" onClick={() => setMenu(false)}>
+            <div className="sheet-in" onClick={(e) => e.stopPropagation()}>
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}><b>All modules</b><button className="icon" onClick={() => setMenu(false)}><X size={16} /></button></div>
+              {NAV.map(([n, I], i) => <button key={n} className={`sheet-btn ${i === screen ? "on" : ""}`} onClick={() => { setScreen(i); setMenu(false); }}><I size={16} />{n}</button>)}
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+
+  return (
+    <div className="root">
+      <style>{css}</style>
+      <div className="toggle">
+        <span className="small mute">Preview as</span>
+        <button className={!mobile ? "on" : ""} onClick={() => setMobile(false)}><Monitor size={14} /> Web</button>
+        <button className={mobile ? "on" : ""} onClick={() => setMobile(true)}><Smartphone size={14} /> Mobile</button>
+      </div>
+      {mobile ? <div className="phone">{shell}</div> : shell}
+    </div>
+  );
+}
+
+const css = `
+.root{font-family:'IBM Plex Sans',system-ui,sans-serif;color:${C.ink};background:#E9EBEF;min-height:100vh;font-size:13.5px;font-variant-numeric:tabular-nums}
+*{box-sizing:border-box}
+.toggle{display:flex;gap:6px;align-items:center;justify-content:center;padding:8px}
+.toggle button{border:1px solid ${C.line};background:#fff;border-radius:6px;padding:5px 10px;display:flex;gap:6px;align-items:center;font:inherit;cursor:pointer;color:${C.mute}}
+.toggle button.on{background:${C.navy};color:#fff;border-color:${C.navy}}
+.app{display:flex;min-height:calc(100vh - 44px);background:${C.paper}}
+.rail{width:224px;background:${C.navy};color:#C9D3E3;padding:18px 12px;display:flex;flex-direction:column;gap:14px;flex-shrink:0}
+.brand{color:#fff;font-weight:600;font-size:15px;display:flex;align-items:center;gap:8px;padding:0 6px}
+.brand-mark{width:12px;height:12px;border-radius:3px;background:linear-gradient(135deg,${C.teal},${C.blue})}
+.entity{background:#1C2F4E;color:#fff;border:1px solid #2C4266;border-radius:6px;padding:8px;font:inherit}
+.entity-m{background:#fff;color:${C.ink};border-color:${C.line};padding:6px}
+.rail nav{display:flex;flex-direction:column;gap:2px}
+.rail nav button{display:flex;gap:10px;align-items:center;background:none;border:0;color:#C9D3E3;padding:9px 10px;border-radius:6px;font:inherit;cursor:pointer;text-align:left}
+.rail nav button.on{background:#fff;color:${C.navy};font-weight:600}
+.rail-foot{margin-top:auto;color:#7E8FAA;padding:0 6px}
+main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.top{display:flex;align-items:center;gap:14px;padding:14px 24px;background:#fff;border-bottom:1px solid ${C.line}}
+.top h1{font-size:18px;font-weight:600;margin:0}
+.top-search{margin-left:auto}
+.search{display:flex;gap:8px;align-items:center;border:1px solid ${C.line};border-radius:6px;padding:6px 10px;background:${C.paper};min-width:220px;font-size:12.5px}
+.icon{border:0;background:none;position:relative;cursor:pointer;color:${C.ink};padding:4px}
+.badge{position:absolute;top:-2px;right:-4px;background:${C.red};color:#fff;font-size:9px;border-radius:8px;padding:1px 4px}
+.avatar{width:30px;height:30px;border-radius:50%;background:${C.tealSoft};color:${C.teal};display:flex;align-items:center;justify-content:center;font-weight:600}
+.content{padding:20px 24px;display:flex;flex-direction:column;gap:16px;flex:1}
+.card{background:${C.card};border:1px solid ${C.line};border-radius:10px;padding:16px}
+.card-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap}
+.card-h h3{margin:0;font-size:14px;font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+.kpis-m{grid-template-columns:1fr 1fr}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid-rep{display:grid;grid-template-columns:300px 1fr;gap:16px}
+.hero-num{font-size:34px;font-weight:600;letter-spacing:-0.5px;line-height:1.1;margin:4px 0}
+.big-num{font-size:22px;font-weight:600;margin:4px 0}
+.mute{color:${C.mute}}.small{font-size:12px}
+.row{display:flex;align-items:center}.gap{gap:8px}
+.up{color:${C.teal};display:inline-flex;align-items:center;gap:2px}.down{color:${C.red};display:inline-flex;align-items:center;gap:2px}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;font-weight:500;color:${C.mute};font-size:12px;padding:6px 8px;border-bottom:1px solid ${C.line}}
+.tbl td{padding:9px 8px;border-bottom:1px solid #EFF1F4;vertical-align:middle}
+.tbl.tight td{padding:5px 6px}
+.tbl tr.total td{font-weight:600;border-top:2px solid ${C.ink};border-bottom:0}
+.scroll{overflow-x:auto}
+.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11.5px;font-weight:500;white-space:nowrap}
+.pill-mute{background:#EEF0F3;color:${C.mute}}.pill-teal{background:${C.tealSoft};color:${C.teal}}.pill-amber{background:${C.amberSoft};color:${C.amber}}.pill-red{background:${C.redSoft};color:${C.red}}.pill-blue{background:${C.blueSoft};color:${C.blue}}
+.btn{border:1px solid ${C.line};background:#fff;border-radius:6px;padding:7px 12px;font:inherit;cursor:pointer;display:inline-flex;gap:6px;align-items:center;color:${C.ink}}
+.btn-p{background:${C.navy};color:#fff;border-color:${C.navy}}.btn-s{padding:5px 10px;font-size:12.5px}
+.btn:focus-visible{outline:2px solid ${C.blue};outline-offset:2px}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;display:inline-block}.dot.sm{width:8px;height:8px;margin-right:6px}
+.bucket-bar{display:flex;height:34px;border-radius:6px;overflow:hidden;gap:2px}
+.bucket-seg{display:flex;align-items:center;padding:0 10px;color:#fff;font-weight:500;font-size:12.5px;white-space:nowrap;overflow:hidden}
+.bucket-target{height:6px;margin-top:4px;background:none}
+.bucket-target div{border-top:3px solid;opacity:.6}
+.bucket-legend{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.bucket-item{display:flex;gap:10px;align-items:center}.bucket-item>div:nth-child(2){flex:1}
+.bucket-name{font-weight:600}
+.attn{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #EFF1F4}.attn>span:first-of-type{flex:1}
+.attn:last-child{border-bottom:0}
+.tabs{display:flex;gap:4px;border-bottom:1px solid ${C.line}}
+.tabs button{border:0;background:none;padding:8px 12px;font:inherit;color:${C.mute};cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:${C.ink};font-weight:600;border-color:${C.navy}}
+.src{border:1px solid ${C.line};border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.prop,.acct{display:flex;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid #EFF1F4}
+.prop:last-child,.acct:last-child{border-bottom:0}
+.prop-ic{width:36px;height:36px;border-radius:8px;background:${C.paper};display:flex;align-items:center;justify-content:center;color:${C.mute};flex-shrink:0}
+.goal{padding:10px 0;border-bottom:1px solid #EFF1F4}.goal:last-child{border-bottom:0}
+.prog{height:6px;background:#EEF0F3;border-radius:3px;margin:8px 0 4px;overflow:hidden}.prog div{height:100%;border-radius:3px}
+.task{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid #EFF1F4}.task:last-child{border-bottom:0}
+.rep{padding:10px;border-radius:8px;cursor:pointer;border:1px solid transparent}.rep.on{background:${C.paper};border-color:${C.line}}
+.empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:40px;text-align:center}
+.flow{display:flex;flex-direction:column;gap:14px}
+.step{display:flex;gap:14px;align-items:flex-start}
+.step-n{width:28px;height:28px;border-radius:50%;background:${C.navy};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0}
+.phone{width:390px;margin:0 auto 24px;border:10px solid #1B1F27;border-radius:36px;overflow:hidden;background:${C.paper};height:820px}
+.phone .app{min-height:100%;height:100%;overflow:auto}
+.app-m .top{padding:12px 14px}.app-m .top h1{font-size:16px;flex:1}
+.app-m .content{padding:14px 14px 80px;gap:12px}
+.app-m .card{padding:12px}.app-m .hero-num{font-size:28px}.app-m .big-num{font-size:18px}
+.app-m .tbl th,.app-m .tbl td{padding:7px 5px;font-size:12px}
+.app-m .grid-3{grid-template-columns:1fr 1fr}
+.app-m .tabs{overflow-x:auto}.app-m .tabs button{white-space:nowrap}
+.tabbar{position:sticky;bottom:0;display:flex;background:#fff;border-top:1px solid ${C.line};padding:6px 0 10px}
+.tabbar button{flex:1;border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:3px;font:inherit;font-size:10.5px;color:${C.mute};cursor:pointer}
+.tabbar button.on{color:${C.navy};font-weight:600}
+.sheet{position:absolute;inset:0;background:rgba(18,33,58,.45);display:flex;align-items:flex-end;z-index:5}
+.sheet-in{background:#fff;width:100%;border-radius:16px 16px 0 0;padding:16px;display:flex;flex-direction:column;gap:2px}
+.sheet-btn{display:flex;gap:10px;align-items:center;border:0;background:none;padding:10px;border-radius:6px;font:inherit;cursor:pointer;text-align:left}
+.sheet-btn.on{background:${C.paper};font-weight:600}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+`;

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm *)", "Bash(npx vitest *)", "Bash(npx tsc *)", "Bash(git status)", "Bash(git diff *)", "Bash(git log *)",
+      "Bash(git add *)", "Bash(git commit *)", "Bash(git checkout *)", "Bash(git branch *)",
+      "Bash(docker compose *)", "Bash(psql *)", "Bash(curl *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)", "Bash(git push origin main)", "Bash(rm -rf *)", "Read(deploy/.env)", "Read(**/.env)"
+    ]
+  }
+}

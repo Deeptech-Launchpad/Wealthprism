@@ -1,0 +1,12 @@
+NSDL Consolidated Account Statement (e-CAS)
+Statement for the period 01-Aug-2026 to 31-Aug-2026        as on 31-Aug-2026
+Name : ARJUN MEHTA
+PAN : ABCPM1234A
+
+Demat Account : IN300126 / 12081600 (Zerodha Broking Ltd)
+ISIN          Security                              Type      Quantity   Market Price   Value
+INE040A01034  HDFC Bank Limited                     Equity    42.000     1,723.81       72,400.02
+
+Mutual Fund Folios
+Folio No : 5566778899/33 (KFintech)
+INF109K01VQ1  ICICI Prudential Liquid Fund - Direct Growth        81.120     358.7200       29,099.36

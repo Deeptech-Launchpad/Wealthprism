@@ -1,0 +1,14 @@
+Marcellus Investment Managers - Consistent Compounders Portfolio
+Client: ARJUN MEHTA   Client Code: MCC-004471   Statement for: August 2026
+Opening Portfolio Value (01-Aug-2026): 29,850.00
+Capital Contributed (Inception to date): 25,000.00
+Closing Portfolio Value (31-Aug-2026): 30,400.00
+Management Fee (Aug): 63.33   Performance Fee: 0.00   Other Charges: 4.10
+XIRR since inception: 11.60%
+
+Holdings as on 31-Aug-2026
+Security                     Qty     Avg Cost   Market Price   Market Value   Weight
+Divi's Laboratories          1.2     5,410.00   6,120.00       7,344.00       24.2%
+Asian Paints                 2.1     2,930.00   3,015.00       6,331.50       20.8%
+Bajaj Finance                0.9     7,200.00   8,410.00       7,569.00       24.9%
+Cash & equivalents                                              9,155.50       30.1%

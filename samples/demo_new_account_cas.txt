@@ -1,0 +1,18 @@
+Consolidated Account Statement
+01-Apr-2026 To 13-Oct-2026
+DEMO TEST USER
+Email Id: demo.test@example.com  PAN: ZZDEM1234Z
+
+Folio No: 7788990011 / 01  PAN: ZZDEM1234Z  KYC: OK
+122639-Parag Parikh Flexi Cap Fund - Direct Plan - Growth (Advisor: DIRECT)  ISIN: INF879O01027
+Opening Unit Balance: 0.000
+Date        Transaction                              Amount (INR)    Units       NAV (INR)   Unit Balance
+15-Jan-2026 Purchase                                    50,000.00    980.890      50.9800   980.890
+15-Jul-2026 Purchase                                    25,000.00    459.340      54.4300  1440.230
+Closing Unit Balance: 1440.230  NAV on 13-Oct-2026: INR 55.2200  Valuation on 13-Oct-2026: INR 79,537.10
+
+120598-ICICI Prudential Liquid Fund - Direct Plan - Growth (Advisor: DIRECT)  ISIN: INF109K01VQ1
+Opening Unit Balance: 0.000
+Date        Transaction                              Amount (INR)    Units       NAV (INR)   Unit Balance
+01-Mar-2026 Purchase                                    40,000.00    116.930     342.1500   116.930
+Closing Unit Balance: 116.930  NAV on 13-Oct-2026: INR 358.7200  Valuation on 13-Oct-2026: INR 41,948.22

@@ -1,0 +1,4 @@
+isin,pct,days,note
+INF879O01027,1,365,Parag Parikh Flexi Cap Fund — standard published equity-fund exit load (1% within 365 days)
+INF109K01VQ1,0,0,ICICI Prudential Liquid Fund — SEBI's graduated liquid-fund exit load tapers to nil by day 7; treated as no material load
+INF174K01LQ9,0.25,30,Kotak Equity Arbitrage Fund — representative arbitrage-fund exit load: short 30-day window, not the 365-day equity default

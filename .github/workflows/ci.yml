@@ -1,0 +1,69 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: familyoffice
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      - run: pnpm --filter @fo/finance build && pnpm --filter @fo/finance test
+        working-directory: app
+      - run: pnpm --filter @fo/parsers build && pnpm --filter @fo/parsers test
+        working-directory: app
+      # a fresh checkout has no dist/, and @fo/connectors and @fo/reports resolve through it:
+      # without this the api tests fail to load with "Failed to resolve entry for package"
+      - name: build the api and every workspace package it imports
+        run: pnpm --filter @fo/api... build
+        working-directory: app
+      # block style, not a { flow mapping }: the braces of ${{ … }} make a flow mapping invalid YAML,
+      # which failed the whole workflow at startup (no jobs ran at all) until this was fixed
+      - name: migrate + seed
+        run: pnpm --filter @fo/api seed
+        working-directory: app
+        env:
+          MIGRATION_DATABASE_URL: postgres://postgres:postgres@localhost:5432/familyoffice
+          DB_DIR: ${{ github.workspace }}/db
+          APP_DB_PASSWORD: app
+          # the executor connects as its own role (db/008); without this the role has no password
+          # and the connectors tests fail to authenticate (28P01)
+          EXECUTOR_DB_PASSWORD: exec
+      - run: pnpm --filter @fo/api test
+        working-directory: app
+        env:
+          DATABASE_URL: postgres://app_user:app@localhost:5432/familyoffice
+          EXECUTOR_DATABASE_URL: postgres://executor_user:exec@localhost:5432/familyoffice
+          LOG_LEVEL: silent
+      - run: pnpm --filter @fo/web build
+        working-directory: app
+      - run: pnpm --filter @fo/mobile typecheck
+        working-directory: app
+
+  # the images are what production runs: a Dockerfile that misses a workspace package must fail here, not on the VPS
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f app/deploy/api.Dockerfile -t fo-api:ci app
+      - run: docker build -f app/deploy/executor.Dockerfile -t fo-executor:ci app
+      - run: docker build -f app/deploy/web.Dockerfile -t fo-web:ci app

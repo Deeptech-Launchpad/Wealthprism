@@ -1,0 +1,14 @@
+{
+  "name": "familyoffice",
+  "private": true,
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "dev:api": "pnpm --filter @fo/api dev",
+    "dev:web": "pnpm --filter @fo/web dev",
+    "dev:executor": "pnpm --filter @fo/executor dev",
+    "build": "pnpm -r --filter './packages/**' --filter @fo/api --filter @fo/web build",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @fo/api migrate",
+    "db:seed": "pnpm --filter @fo/api seed"
+  }
+}

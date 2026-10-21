@@ -1,0 +1,22 @@
+{
+  email {$CADDY_EMAIL:admin@example.com}
+}
+
+# With a domain: HTTPS for app + api. Without one (DOMAIN empty), Caddy serves plain HTTP on the VPS IP.
+:80 {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy strict-origin-when-cross-origin
+  }
+  handle /api/* {
+    reverse_proxy api:4000
+  }
+  handle /healthz {
+    reverse_proxy api:4000
+  }
+  handle {
+    reverse_proxy web:80
+  }
+}

@@ -1,0 +1,33 @@
+Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date
+ 
+Open Ended Schemes(Equity Scheme - Flexi Cap Fund)
+ 
+PPFAS Mutual Fund
+ 
+122639;INF879O01027;-;Parag Parikh Flexi Cap Fund - Direct Plan - Growth;55.9312;11-Sep-2026
+122640;INF879O01019;-;Parag Parikh Flexi Cap Fund - Regular Plan - Growth;51.2201;11-Sep-2026
+ 
+Open Ended Schemes(Equity Scheme - Small Cap Fund)
+ 
+Axis Mutual Fund
+ 
+125354;INF846K01K35;-;Axis Small Cap Fund - Direct Plan - Growth;113.0450;11-Sep-2026
+125353;INF846K01K27;INF846K01K43;Axis Small Cap Fund - Direct Plan - IDCW;61.8800;11-Sep-2026
+ 
+Open Ended Schemes(Debt Scheme - Liquid Fund)
+ 
+ICICI Prudential Mutual Fund
+ 
+120598;INF109K01VQ1;-;ICICI Prudential Liquid Fund - Direct Plan - Growth;358.9104;11-Sep-2026
+ 
+Open Ended Schemes(Hybrid Scheme - Arbitrage Fund)
+ 
+Kotak Mahindra Mutual Fund
+ 
+119809;INF174K01LS2;-;Kotak Equity Arbitrage Fund - Direct Plan - Growth;38.4412;11-Sep-2026
+ 
+Open Ended Schemes(Other Scheme - Index Funds)
+ 
+UTI Mutual Fund
+ 
+120716;INF789F1AUS7;-;UTI Nifty 50 Index Fund - Direct Plan - Growth;172.5566;11-Sep-2026

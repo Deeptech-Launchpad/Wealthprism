@@ -1,0 +1,26 @@
+Consolidated Account Statement
+01-Apr-2026 To 10-Sep-2026
+ARJUN MEHTA
+Email Id: arjun@example.com  PAN: ABCDE1234A
+
+Folio No: 5566123456 / 33  PAN: ABCDE1234A  KYC: OK
+120598-ICICI Prudential Liquid Fund - Direct Plan - Growth (Advisor: DIRECT)  ISIN: INF109K01VQ1
+Opening Unit Balance: 0.000
+Date        Transaction                              Amount (INR)    Units       NAV (INR)   Unit Balance
+01-Jul-2026 Purchase                                    28,000.00     81.120     345.1700    81.120
+Closing Unit Balance: 81.120  NAV on 10-Sep-2026: INR 358.7200  Valuation on 10-Sep-2026: INR 29,099.36
+
+MEHTA HUF
+Folio No: 9182456789 / 12  PAN: ABCDE1234H  KYC: OK
+122639-Parag Parikh Flexi Cap Fund - Direct Plan - Growth (Advisor: DIRECT)  ISIN: INF879O01027
+Opening Unit Balance: 0.000
+Date        Transaction                              Amount (INR)    Units       NAV (INR)   Unit Balance
+10-Jan-2024 Purchase                                     7,020.00    200.000      35.1000   200.000
+10-Jun-2025 Systematic Investment (1)                    7,178.00    182.100      39.4200   382.100
+10-Sep-2026 Systematic Investment (1)                    2,000.00     36.219      55.2200   418.319
+Closing Unit Balance: 418.319  NAV on 10-Sep-2026: INR 55.2200  Valuation on 10-Sep-2026: INR 23,099.58
+
+125354-Axis Small Cap Fund - Direct Plan - Growth  ISIN: INF846K01K35
+02-Nov-2025 Purchase                                     4,800.00     41.200     116.5049    41.200
+18-Aug-2026 Redemption                                  (4,600.00)   (41.200)    111.6505     0.000
+Closing Unit Balance: 0.000

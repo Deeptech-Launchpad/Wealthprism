@@ -1,0 +1,65 @@
+{
+  "account": {
+    "type": "deposit",
+    "maskedAccNumber": "XXXXXXXX0928",
+    "linkedAccRef": "ref-huf-0928",
+    "Profile": {
+      "Holders": {
+        "type": "SINGLE",
+        "Holder": {
+          "name": "MEHTA HUF",
+          "pan": "ABCDE1234H",
+          "ckycCompliance": "true"
+        }
+      }
+    },
+    "Summary": {
+      "currentBalance": "18623.00",
+      "currency": "INR",
+      "balanceDateTime": "2026-09-11T05:11:00.000Z",
+      "type": "CURRENT",
+      "branch": "Coimbatore RS Puram",
+      "ifscCode": "ICIC0000928",
+      "status": "ACTIVE"
+    },
+    "Transactions": {
+      "startDate": "2026-09-01",
+      "endDate": "2026-09-11",
+      "Transaction": [
+        {
+          "txnId": "S1",
+          "type": "CREDIT",
+          "mode": "OTHERS",
+          "amount": "2565.00",
+          "currentBalance": "18623.00",
+          "transactionTimestamp": "2026-09-11T04:58:00.000Z",
+          "valueDate": "2026-09-11",
+          "narration": "NEFT KOVAI ANALYTICS PVT LTD RENT SEP",
+          "reference": "N254260912345678"
+        },
+        {
+          "txnId": "S2",
+          "type": "DEBIT",
+          "mode": "OTHERS",
+          "amount": "2000.00",
+          "currentBalance": "16058.00",
+          "transactionTimestamp": "2026-09-10T03:30:00.000Z",
+          "valueDate": "2026-09-10",
+          "narration": "ACH D- PPFAS MF SIP",
+          "reference": "ACHD2609100910"
+        },
+        {
+          "txnId": "S3",
+          "type": "DEBIT",
+          "mode": "OTHERS",
+          "amount": "482.00",
+          "currentBalance": "18058.00",
+          "transactionTimestamp": "2026-09-09T06:12:00.000Z",
+          "valueDate": "2026-09-09",
+          "narration": "BILLDESK CCMC PROPERTY TAX",
+          "reference": "BD26090912345"
+        }
+      ]
+    }
+  }
+}
