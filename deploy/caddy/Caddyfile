@@ -3,7 +3,7 @@
 }
 
 # With a domain: HTTPS for app + api. Without one (DOMAIN empty), Caddy serves plain HTTP on the VPS IP.
-:80 {
+{$SITE_ADDRESS::80} {
   encode zstd gzip
   header {
     X-Content-Type-Options nosniff

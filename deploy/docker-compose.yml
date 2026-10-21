@@ -30,7 +30,8 @@ x-api-common: &api-common
 services:
   caddy:
     image: caddy:2-alpine
-    ports: ["127.0.0.1:8080:80"]
+    ports: ["${CADDY_HTTP_BIND:-127.0.0.1:8090}:80", "${CADDY_HTTPS_BIND:-127.0.0.1:8453}:443"]
+    mem_limit: 192m
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -50,16 +51,19 @@ services:
         VITE_API_URL: /api/v1
     restart: unless-stopped
     expose: ["80"]
+    mem_limit: 128m
 
   api:
     <<: *api-common
     command: ["node", "dist/server.js"]
     expose: ["4000"]
+    mem_limit: 1g
     healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:4000/healthz"], interval: 30s, timeout: 5s, retries: 3 }
 
   worker:
     <<: *api-common
-    command: ["node", "dist/server.js"]   # worker entry lands with FO-27 (BullMQ); runs API for now
+    command: ["node", "dist/worker.js"]   # the scheduler: overdue reminders, cooling-off release, GL refresh, market jobs
+    mem_limit: 768m
 
   executor:
     image: ghcr.io/${GH_ORG}/familyoffice-executor:${IMAGE_TAG:-latest}
@@ -75,6 +79,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
+    mem_limit: 384m
     read_only: true
     tmpfs: ["/tmp"]
     cap_drop: [ALL]
@@ -108,18 +113,21 @@ services:
       APP_DB_PASSWORD: ${APP_DB_PASSWORD}
       EXECUTOR_DB_PASSWORD: ${EXECUTOR_DB_PASSWORD}
       SEED_ON_START: ${SEED_ON_START:-false}
+      SEED_DEMO_LOGIN: ${SEED_DEMO_LOGIN:-true}
       TZ: Asia/Kolkata
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./scripts/pg-init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
       - ../db:/db:ro
     command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_connections=100", "-c", "log_min_duration_statement=500"]
+    mem_limit: 1536m
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres -d familyoffice"], interval: 10s, timeout: 5s, retries: 10 }
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 320m
     volumes: [redis_data:/data]
     healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 3s, retries: 5 }
     restart: unless-stopped
@@ -127,6 +135,7 @@ services:
   minio:
     image: quay.io/minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
+    mem_limit: 512m
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -145,6 +154,7 @@ services:
       - backups:/backups
       - minio_data:/minio:ro
     entrypoint: ["/bin/sh", "-c", "apk add --no-cache rclone >/dev/null 2>&1; while true; do /backup.sh; sleep 86400; done"]
+    mem_limit: 256m
     depends_on: [postgres]
     restart: unless-stopped
 
