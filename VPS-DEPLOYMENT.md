@@ -34,9 +34,9 @@ detects whether port 80 is free, sets the Caddy site address, builds the four im
 | worker | same image, `dist/worker.js` | scheduler: expiring intents, cooling-off release, overdue rent, GL balance refresh |
 | executor | `app/deploy/executor.Dockerfile` | execution loop on its own DB role; sandbox until `SANDBOX_ONLY=false` |
 | postgres | postgres:16-alpine | applies `db/001…013` on first start (`deploy/scripts/pg-init.sh`); seeds if `SEED_ON_START=true` |
-| redis, minio, backup | redis:7, quay.io/minio/minio, postgres:16 | queue store, documents, nightly dump + rclone offsite |
+| redis, backup | redis:7, postgres:16 | queue store, nightly dump + rclone offsite. Uploaded documents live on the `docs_data` volume (MinIO was dropped: its public images are no longer available) |
 
-Data lives in Docker volumes `pg_data`, `minio_data`, `redis_data`, `backups`, `caddy_data`.
+Data lives in Docker volumes `pg_data`, `docs_data`, `redis_data`, `backups`, `caddy_data`.
 
 ## 4. Day-2 operations
 

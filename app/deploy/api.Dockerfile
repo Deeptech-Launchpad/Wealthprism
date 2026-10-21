@@ -21,7 +21,7 @@ COPY apps/api apps/api
 # topological: every dependency builds before the api, and a new one is picked up without editing this file
 RUN pnpm --filter @fo/api... build
 ENV NODE_ENV=production
-RUN addgroup -S app && adduser -S app -G app && chown -R app:app /repo
+RUN addgroup -S app && adduser -S app -G app && mkdir -p /data/documents && chown -R app:app /repo /data
 USER app
 WORKDIR /repo/apps/api
 EXPOSE 4000

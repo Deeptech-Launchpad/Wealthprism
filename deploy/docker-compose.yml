@@ -12,18 +12,15 @@ x-api-common: &api-common
     DATABASE_URL: postgres://app_user:${APP_DB_PASSWORD}@postgres:5432/familyoffice
     MIGRATION_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/familyoffice
     REDIS_URL: redis://redis:6379
-    S3_ENDPOINT: http://minio:9000
-    S3_BUCKET: documents
-    S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-    S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    STORAGE_DIR: /data/documents      # no S3_ENDPOINT set, so the API stores documents on this volume
     TZ: Asia/Kolkata
   volumes:
     - ../db:/db:ro
     - ../api:/api:ro
+    - docs_data:/data
   depends_on:
     postgres: { condition: service_healthy }
     redis: { condition: service_healthy }
-    minio: { condition: service_started }
   restart: unless-stopped
   logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
@@ -132,17 +129,6 @@ services:
     healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 3s, retries: 5 }
     restart: unless-stopped
 
-  minio:
-    image: quay.io/minio/minio:latest
-    command: ["server", "/data", "--console-address", ":9001"]
-    mem_limit: 512m
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    volumes: [minio_data:/data]
-    expose: ["9000", "9001"]
-    restart: unless-stopped
-
   backup:
     image: postgres:16-alpine
     env_file: .env
@@ -152,7 +138,7 @@ services:
     volumes:
       - ./scripts/backup.sh:/backup.sh:ro
       - backups:/backups
-      - minio_data:/minio:ro
+      - docs_data:/docs:ro
     entrypoint: ["/bin/sh", "-c", "apk add --no-cache rclone >/dev/null 2>&1; while true; do /backup.sh; sleep 86400; done"]
     mem_limit: 256m
     depends_on: [postgres]
@@ -162,7 +148,7 @@ volumes:
   vault_data: {}
   pg_data: {}
   redis_data: {}
-  minio_data: {}
+  docs_data: {}
   backups: {}
   caddy_data: {}
   caddy_config: {}
