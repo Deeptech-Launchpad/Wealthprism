@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { readFileSync } from "node:fs";
-import { pool } from "./lib/db.js";
+import { pool, withFamily } from "./lib/db.js";
 import { refreshBaselines, runOptimiserAll } from "./jobs/planning.js";
 import { runComplianceAll, runReviewsAll } from "./jobs/policy.js";
 import { rebalanceNeedsAll, rebalanceEvaluateAll } from "./jobs/rebalance.js";
@@ -13,10 +13,20 @@ const [cmd, ...rest] = process.argv.slice(2);
 const arg = (k: string) => { const i = rest.indexOf(`--${k}`); return i >= 0 ? rest[i + 1] : undefined; };
 if (cmd === "set-password") { await pool.query("update users set password_hash=$2 where email=$1", [arg("email"), await bcrypt.hash(arg("password")!, 10)]); console.log("password set"); }
 else if (cmd === "create-owner") {
+  const email = (arg("email") ?? "").toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { console.error("give a valid --email"); process.exit(1); }
+  // an existing e-mail must stop us before anything is written (users.email is unique, and a half-created family would be left behind)
+  if ((await pool.query("select 1 from users where email=$1", [email])).rowCount) { console.error(`a user with ${email} already exists`); process.exit(1); }
   const pw = arg("password") ?? Math.random().toString(36).slice(2, 12) + "!A1";
-  const fam = await pool.query("insert into families (name) values ($1) returning id", [arg("family") ?? "My Family"]);
-  const u = await pool.query("insert into users (email, name, password_hash) values ($1,$2,$3) returning id", [arg("email"), arg("name") ?? "Owner", await bcrypt.hash(pw, 10)]);
-  await pool.query("insert into family_members (family_id, user_id, role, accepted_at) values ($1,$2,'owner',now())", [fam.rows[0].id, u.rows[0].id]);
+  const fam = await pool.query("insert into families (name, base_currency) values ($1,'INR') returning id", [arg("family") ?? "My Family"]);
+  const u = await pool.query("insert into users (email, name, password_hash) values ($1,$2,$3) returning id", [email, arg("name") ?? "Owner", await bcrypt.hash(pw, 10)]);
+  // family_members is row-level-secured by family: it can only be written with that family's context set, exactly as POST /auth/register does
+  await withFamily(fam.rows[0].id, async (c) => {
+    await c.query("insert into family_members (family_id, user_id, role, invited_at, accepted_at) values ($1,$2,'owner',now(),now())", [fam.rows[0].id, u.rows[0].id]);
+    await c.query("insert into wc_settings (family_id) values ($1) on conflict do nothing", [fam.rows[0].id]);
+    await c.query("insert into bucket_targets (family_id, liquidity_pct, income_pct, growth_pct) values ($1,8,32,60)", [fam.rows[0].id]);
+    await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'create','families',$1,$3)", [fam.rows[0].id, u.rows[0].id, JSON.stringify({ via: "cli_create_owner" })]);
+  });
   console.log(JSON.stringify({ family_id: fam.rows[0].id, user_id: u.rows[0].id, one_time_password: pw }));
 }
 // market data: live feeds or a local file (--file), so history can be loaded without network access

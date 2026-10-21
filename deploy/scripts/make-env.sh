@@ -36,6 +36,8 @@ CORS_ORIGIN=$WEB_URL
 PUBLIC_WEB_URL=$WEB_URL
 PUBLIC_API_URL=$WEB_URL/api/v1
 EMAIL_TRANSPORT=log
+# a public server does not let strangers create accounts; create the first owner with: docker compose exec api node dist/cli.js create-owner ...
+ALLOW_SIGNUP=false
 # the demo family is loaded only so the later migrations (which add reference data) can run; its logins are locked below
 SEED_ON_START=true
 SEED_DEMO_LOGIN=false
