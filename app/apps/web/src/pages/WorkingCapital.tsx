@@ -6,6 +6,7 @@ import { Card, Pill, Status, fmtDate } from "../components";
 // Working capital (PRD 3.6; FO-60): float and excess from @fo/finance, the upcoming committed outflows, a deployment plan that ladders the
 // excess by when it is needed and the entity's slab, the instrument ladder (gross vs post-tax yield) and the family's float / idle settings.
 const inp = { background: "#fff", color: "var(--ink)", borderColor: "var(--line)" } as const;
+const cell = { ...inp, border: "1px solid var(--line)", borderRadius: 6, padding: "6px 8px", font: "inherit" } as const;
 const role = () => session.get()?.families.find((f) => f.id === session.family())?.role ?? "viewer";
 const canWrite = () => ["owner", "member", "operator"].includes(role()); const isMember = () => ["owner", "member"].includes(role());
 const KC: Record<string, string> = { overnight_fund: "var(--blue)", liquid_fund: "var(--blue)", arbitrage_fund: "var(--teal)", bank_fd: "var(--amber)", target_maturity_debt: "var(--amber)", tbill: "var(--amber)" };
@@ -71,26 +72,30 @@ function Ladder() {
 const FUND_BUCKETS = ["overnight_fund", "liquid_fund", "arbitrage_fund", "target_maturity_debt"];
 const BASIS: Record<string, string> = { overnight_fund: "30-day", liquid_fund: "30-day", arbitrage_fund: "1-year", target_maturity_debt: "1-year" };
 
+const SUGGEST: Record<string, string> = { overnight_fund: "overnight direct growth", liquid_fund: "liquid direct growth", arbitrage_fund: "arbitrage direct growth", target_maturity_debt: "target maturity direct growth" };
+
 /** Search AMFI's scheme list and link a bucket to one scheme: the bucket's yield then comes from that scheme's own NAV growth. */
 function FundPicker({ bucket, onLinked }: { bucket: string; onLinked: (settings: any) => void }) {
-  const [q, setQ] = useState(""); const [hits, setHits] = useState<any[] | null>(null); const [busy, setBusy] = useState(""); const [err, setErr] = useState("");
+  const [q, setQ] = useState(""); const [hits, setHits] = useState<any[] | null>(null); const [busy, setBusy] = useState(""); const [err, setErr] = useState(""); const [focus, setFocus] = useState(false);
+  const term = q.trim().length >= 3 ? q.trim() : (focus ? (SUGGEST[bucket] ?? "") : "");   // clicking the empty box lists this bucket's usual funds
   useEffect(() => {
-    if (q.trim().length < 3) { setHits(null); return; }
+    if (term.length < 3) { setHits(null); return; }
     let alive = true; setBusy("search"); setErr("");
     const t = setTimeout(async () => {
-      try { const r = await api<any[]>(`/working-capital/fund-search?q=${encodeURIComponent(q.trim())}`); if (alive) setHits(r); }
+      try { const r = await api<any[]>(`/working-capital/fund-search?q=${encodeURIComponent(term)}`); if (alive) setHits(r); }
       catch (e: any) { if (alive) { setErr(e.message); setHits(null); } }
       finally { if (alive) setBusy(""); }
     }, 350);
     return () => { alive = false; clearTimeout(t); };
-  }, [q]);
+  }, [term]);
   const link = async (code: string) => {
     setBusy(code); setErr("");
     try { onLinked(await api<any>("/working-capital/fund-link", { method: "POST", body: JSON.stringify({ bucket, code }) })); setQ(""); setHits(null); }
     catch (e: any) { setErr(e.message); } finally { setBusy(""); }
   };
   return (<div>
-    <input style={{ ...inp, width: "100%", boxSizing: "border-box" }} placeholder="Search a fund, e.g. HDFC liquid direct growth" value={q} onChange={(e) => setQ(e.target.value)} />
+    <input style={{ ...cell, width: "100%", boxSizing: "border-box" }} placeholder="Search a fund, e.g. HDFC liquid direct growth" value={q} onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 150)} onChange={(e) => setQ(e.target.value)} />
+    {focus && q.trim().length < 3 && hits && hits.length > 0 && <div className="small mute">Usual choices — type to narrow the list</div>}
     {busy === "search" && <div className="small mute">Searching the AMFI fund list…</div>}
     {err && <div className="err">{err}</div>}
     {hits && hits.length === 0 && <div className="small mute">No fund matches every word you typed.</div>}
@@ -122,13 +127,13 @@ function Settings({ onChange }: { onChange: () => void }) {
     else if (!manualNow) tag = <span className="small" style={{ color: "var(--amber)" }}>waiting for enough NAV history — using your typed {editing ? f.typed[k] : prefs.manual_yields[k]}%</span>;
     else tag = <span className="small mute">typed by you{liveOf(k) != null ? <> · live would be {liveOf(k)}% {editing && <button type="button" className="btn btn-s" style={{ marginLeft: 6 }} onClick={() => setF({ ...f, mode: { ...f.mode, [k]: "live" } })}>Use live</button>}</> : null}</span>;
     return (<div style={{ textAlign: "right" }}>
-      {editing ? <input style={{ ...inp, width: 70, textAlign: "right" }} type="number" step="0.01" value={shown ?? ""} onWheel={(e) => (e.target as HTMLInputElement).blur()} onChange={(e) => setF({ ...f, typed: { ...f.typed, [k]: e.target.value }, mode: linked ? { ...f.mode, [k]: "manual" } : f.mode })} /> : <b>{shown ?? "—"}%</b>}
+      {editing ? <input style={{ ...cell, width: 80, textAlign: "right" }} type="number" step="0.01" value={shown ?? ""} onWheel={(e) => (e.target as HTMLInputElement).blur()} onChange={(e) => setF({ ...f, typed: { ...f.typed, [k]: e.target.value }, mode: linked ? { ...f.mode, [k]: "manual" } : f.mode })} /> : <b>{shown ?? "—"}%</b>}
       <div>{tag}</div></div>);
   };
   const nameCell = (k: string) => {
     const linked = prefs.funds?.[k];
     if (!f) return (<div>{prefs.instruments[k]}{linked && <div className="small mute">linked to AMFI scheme {linked.code}</div>}</div>);
-    if (!FUND_BUCKETS.includes(k)) return <input style={inp} value={f.names[k] ?? ""} onChange={(e) => setF({ ...f, names: { ...f.names, [k]: e.target.value } })} />;
+    if (!FUND_BUCKETS.includes(k)) return <input style={{ ...cell, width: "100%", boxSizing: "border-box" }} value={f.names[k] ?? ""} onChange={(e) => setF({ ...f, names: { ...f.names, [k]: e.target.value } })} />;
     if (picking === k || !linked) return (<div><FundPicker bucket={k} onLinked={applyServer} />{linked && <button type="button" className="btn btn-s" style={{ marginTop: 4 }} onClick={() => setPicking(null)}>Keep {String(linked.name).split(" — ")[0]}</button>}</div>);
     return (<div><b>{prefs.instruments[k]}</b><div className="small mute">AMFI scheme {linked.code}</div>
       <div className="row gap" style={{ marginTop: 4 }}><button type="button" className="btn btn-s" onClick={() => setPicking(k)}>Change fund</button><button type="button" className="btn btn-s" disabled={!!act.busy} onClick={() => act.run("unlink", async () => { applyServer(await api<any>(`/working-capital/fund-link/${k}`, { method: "DELETE" })); })}>Unlink</button></div></div>);
