@@ -1,7 +1,7 @@
 import { csv, parseDate, ParseResult } from "./types.js";
 
 /** One NAV line from AMFI's NAVAll.txt (https://www.amfiindia.com/spages/NAVAll.txt). */
-export interface AmfiNav { amfiCode: string; isin?: string; isinReinvest?: string; name: string; nav: number; date: string; category: string; amc: string; assetClass: string }
+export interface AmfiNav { amfiCode: string; isin?: string; isinReinvest?: string; name: string; nav: number; date: string; category: string; amc: string; assetClass: string; plan?: string; option?: string }
 /** Scheme category header → the platform's asset_class taxonomy (the tax rule key). */
 export function amfiAssetClass(category: string): string {
   const c = category.toLowerCase();
@@ -16,14 +16,21 @@ export function amfiAssetClass(category: string): string {
 export function parseAmfiNavAll(text: string): ParseResult<AmfiNav> {
   const rows: AmfiNav[] = []; const errors: { row: number; message: string }[] = [];
   let category = "", amc = "";
+  // the older six-column layout is the default; a header line, when present, says where each column really is (the current file has Plan and Option too)
+  let ix = { code: 0, isin: 1, isinR: 2, name: 3, nav: 4, date: 5, plan: -1, option: -1 };
   text.split(/\r?\n/).forEach((line, i) => {
     const l = line.trim(); if (!l) return;
-    if (/^Scheme Code;/i.test(l)) return;
+    if (/^Scheme Code;/i.test(l)) {
+      const h = l.split(";").map((x) => x.trim().toLowerCase());
+      const at = (pred: (x: string) => boolean, dflt: number) => { const j = h.findIndex(pred); return j >= 0 ? j : dflt; };
+      ix = { code: at((x) => x === "scheme code", 0), isin: at((x) => x.startsWith("isin div payout"), 1), isinR: at((x) => x.startsWith("isin div reinvestment"), 2), name: at((x) => x === "scheme name", 3), nav: at((x) => x.startsWith("net asset value"), 4), date: at((x) => x === "date", 5), plan: at((x) => x === "plan", -1), option: at((x) => x === "option", -1) };
+      return;
+    }
     if (!l.includes(";")) { if (/^open ended|^close ended|^interval/i.test(l)) category = l; else amc = l; return; }
     const c = l.split(";").map((x) => x.trim());
-    if (c.length < 6) { errors.push({ row: i + 1, message: "short line" }); return; }
-    const nav = Number(c[4]); if (!Number.isFinite(nav) || nav <= 0) { errors.push({ row: i + 1, message: `bad NAV ${c[4]}` }); return; }
-    try { rows.push({ amfiCode: c[0], isin: /^INF/.test(c[1]) ? c[1] : undefined, isinReinvest: /^INF/.test(c[2]) ? c[2] : undefined, name: c[3], nav, date: parseDate(c[5]), category, amc, assetClass: amfiAssetClass(category) }); }
+    if (c.length <= Math.max(ix.code, ix.isin, ix.isinR, ix.name, ix.nav, ix.date)) { errors.push({ row: i + 1, message: "short line" }); return; }
+    const nav = Number(c[ix.nav]); if (!Number.isFinite(nav) || nav <= 0) { errors.push({ row: i + 1, message: `bad NAV ${c[ix.nav]}` }); return; }
+    try { rows.push({ amfiCode: c[ix.code], isin: /^INF/.test(c[ix.isin]) ? c[ix.isin] : undefined, isinReinvest: /^INF/.test(c[ix.isinR]) ? c[ix.isinR] : undefined, name: c[ix.name], nav, date: parseDate(c[ix.date]), category, amc, assetClass: amfiAssetClass(category), ...(ix.plan >= 0 ? { plan: c[ix.plan] } : {}), ...(ix.option >= 0 ? { option: c[ix.option] } : {}) }); }
     catch (e: any) { errors.push({ row: i + 1, message: e.message }); }
   });
   return { rows, errors, provider: "amfi" };
@@ -125,4 +132,18 @@ export function parseBenchmarkSeries(text: string): ParseResult<{ date: string; 
   const lines = csv(text); const h = lines[0].map((x) => x.trim().toLowerCase()); const di = Math.max(0, h.findIndex((x) => /date/.test(x))), vi = h.findIndex((x) => /value|close|index|tri|nav/.test(x));
   lines.slice(1).forEach((r, i) => { try { const v = Number(String(r[vi >= 0 ? vi : 1] ?? "").replace(/,/g, "")); const d = (r[di] ?? "").trim(); if (!d || !Number.isFinite(v)) return; rows.push({ date: /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : parseDate(d), value: v }); } catch (e: any) { errors.push({ row: i + 2, message: e.message }); } });
   return { rows, errors, provider: "benchmark_csv" };
+}
+
+/** One line of AMFI's NAV history report (portal.amfiindia.com, DownloadNAVHistoryReport_Po.aspx): a scheme's NAV on a date. */
+export interface AmfiHistoryNav { amfiCode: string; name: string; nav: number; date: string }
+export function parseAmfiHistory(text: string, onlyCodes?: Set<string>): AmfiHistoryNav[] {
+  const out: AmfiHistoryNav[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.includes(";") || /^Scheme Code;/i.test(line)) continue;
+    const c = line.split(";"); if (c.length < 8) continue;
+    const code = c[0].trim(); if (!/^\d+$/.test(code) || (onlyCodes && !onlyCodes.has(code))) continue;
+    const nav = Number(c[6]); if (!Number.isFinite(nav) || nav <= 0) continue;
+    try { out.push({ amfiCode: code, name: c[1].trim(), nav, date: parseDate(c[7]) }); } catch { /* a malformed date line is skipped */ }
+  }
+  return out;
 }

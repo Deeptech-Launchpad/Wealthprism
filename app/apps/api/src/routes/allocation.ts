@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireFamily, requireRole } from "../lib/auth.js";
 import { withFamily } from "../lib/db.js";
 import { AllocError, createGoal, updateGoal, setGoalLinks, goalView, bucketTargets, putBucketTargets, glidePaths, putGlidePath, rebalanceProposal, modelPortfolios, createModelPortfolio, assetClassTargets, putAssetClassTargets, allocationPolicy, putAllocationPolicy, allocationStatus, recordAllocationReview } from "../lib/allocation.js";
-import { wcSettings, putWcSettings, buildPlan, plans, planTasks, ladder, wcSummary } from "../lib/workingcap.js";
+import { wcSettings, putWcSettings, buildPlan, plans, planTasks, ladder, wcSummary, fundSearch, linkFund, unlinkFund, refreshYields } from "../lib/workingcap.js";
 
 const WRITERS = requireRole("owner", "member", "operator"), MEMBERS = requireRole("owner", "member");
 const num = z.union([z.number(), z.string().regex(/^-?\d+(\.\d+)?$/)]).transform(Number); const uuid = z.string().uuid();
@@ -42,7 +42,12 @@ export default async function allocationRoutes(app: FastifyInstance) {
 
   // ---------- working capital ----------
   app.get("/working-capital/settings", async (req, reply) => tx(req, reply, (c) => wcSettings(c, fam(req))));
-  app.put("/working-capital/settings", { preHandler: MEMBERS }, async (req, reply) => { const b = z.object({ float_days: z.number().int().min(7).max(365).optional(), buffer_months: num.optional(), idle_days: z.number().int().min(1).max(365).optional(), instrument_prefs: z.object({ instruments: z.record(z.string()).optional(), yields: z.record(num).optional() }).optional() }).parse(req.body); return tx(req, reply, (c) => putWcSettings(c, fam(req), b)); });
+  app.put("/working-capital/settings", { preHandler: MEMBERS }, async (req, reply) => { const b = z.object({ float_days: z.number().int().min(7).max(365).optional(), buffer_months: num.optional(), idle_days: z.number().int().min(1).max(365).optional(), instrument_prefs: z.object({ instruments: z.record(z.string()).optional(), yields: z.record(num).optional(), yield_mode: z.record(z.string()).optional(), inflation_pct: num.optional() }).optional() }).parse(req.body); return tx(req, reply, (c) => putWcSettings(c, fam(req), b)); });
+  // live fund yields: search AMFI's scheme list, link a bucket to a scheme, unlink, and re-fetch the NAVs
+  app.get("/working-capital/fund-search", async (req, reply) => { try { return void reply.send(await fundSearch(String((req.query as any)?.q ?? ""))); } catch (e) { return problem(reply, e); } });
+  app.post("/working-capital/fund-link", { preHandler: MEMBERS }, async (req, reply) => { const b = z.object({ bucket: z.string(), code: z.string().regex(/^\d{3,8}$/) }).parse(req.body); return tx(req, reply, (c) => linkFund(c, fam(req), b.bucket, b.code)); });
+  app.delete("/working-capital/fund-link/:bucket", { preHandler: MEMBERS }, async (req, reply) => tx(req, reply, (c) => unlinkFund(c, fam(req), (req.params as any).bucket)));
+  app.post("/working-capital/yields/refresh", { preHandler: MEMBERS }, async (req, reply) => tx(req, reply, (c) => refreshYields(c, fam(req))));
   app.get("/working-capital/plans", async (req, reply) => tx(req, reply, (c) => plans(c, fam(req))));
   app.post("/working-capital/plan", { preHandler: WRITERS }, async (req, reply) => { const b = z.object({ amount: num.optional(), entity_id: uuid.optional() }).parse(req.body ?? {}); return tx(req, reply, (c) => buildPlan(c, fam(req), { amount: b.amount ?? null, entityId: b.entity_id ?? null, userId: req.user!.id }), 201); });
   app.post("/working-capital/plan/:id/tasks", { preHandler: WRITERS }, async (req, reply) => tx(req, reply, (c) => planTasks(c, fam(req), (req.params as any).id, req.user!.id), 201));

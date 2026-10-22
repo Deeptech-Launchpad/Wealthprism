@@ -85,7 +85,7 @@ export async function runFxFeed(fetchText: (url: string) => Promise<string> = fe
 
 // ---------- health ----------
 export const FEED_JOBS: { job: string; label: string; window: string; source: string }[] = [
-  { job: "prices.eod", label: "Equity & bond closes", window: "18:30 IST, trading days", source: "NSE bhavcopy (BSE fallback)" }, { job: "amfi.nav", label: "Mutual fund NAVs", window: "23:15 IST", source: "AMFI NAVAll" },
+  { job: "prices.eod", label: "Equity & bond closes", window: "18:30 IST, trading days", source: "NSE bhavcopy (BSE fallback)" }, { job: "amfi.nav", label: "Mutual fund NAVs", window: "23:15 IST", source: "AMFI NAVAll" }, { job: "wc.yields", label: "Working-capital fund yields", window: "23:30 IST", source: "AMFI NAV history" },
   { job: "benchmarks.eod", label: "Index closes", window: "18:30 IST", source: "NSE allIndices" }, { job: "benchmarks.tri", label: "Total-return indices", window: "18:30 IST", source: "niftyindices TRI" }, { job: "benchmarks.series", label: "Licensed series (CRISIL)", window: "18:30 IST", source: "BENCHMARK_SERIES_URLS" },
   { job: "corporate_actions.fetch", label: "Corporate actions", window: "08:00 IST", source: "NSE corporate actions" }, { job: "fx.daily", label: "FX reference rates", window: "18:30 IST", source: "FX_RATES_URL (ECB / frankfurter)" }, { job: "valuations.daily", label: "Valuation snapshots", window: "23:30 IST", source: "internal" }, { job: "prices.stale", label: "Stale-price tasks", window: "09:00 IST", source: "internal" }, { job: "aa.sync", label: "Bank sync (AA)", window: "every 4 h", source: "Account Aggregator" },
 ];

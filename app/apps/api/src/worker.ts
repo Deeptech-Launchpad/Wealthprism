@@ -1,6 +1,7 @@
 /** Scheduler: releases approved intents after cooling-off, expires stale ones, refreshes GL balances, flags overdue rent,
  *  and runs the market-data jobs on their IST windows. Runs every 60 s. */
 import { pool } from "./lib/db.js";
+import { fundYieldsAll } from "./jobs/wcyields.js";
 import { runFeeds, snapshotValuations, refreshPerformanceCache, stalePriceTasks, recordRun } from "./jobs/market.js";
 import { generateTasks } from "./jobs/tasks.js";
 import { refreshBaselines, runOptimiserAll } from "./jobs/planning.js";
@@ -56,6 +57,7 @@ export async function marketTick() {
   const safe = async (job: string, fn: () => Promise<unknown>) => { try { await fn(); } catch (e: any) { console.error("job", job, e.message ?? e); } };
   if (weekday && t >= 1830 && !(await ranToday("prices.eod"))) await safe("prices.eod", () => runFeeds(["eod", "indices", "tri", "series", "fx"]));
   if (t >= 2315 && !(await ranToday("amfi.nav"))) await safe("amfi.nav", () => runFeeds(["amfi"]));
+  if (t >= 2330 && !(await ranToday("wc.yields"))) await safe("wc.yields", () => recordRun("wc.yields", () => fundYieldsAll()));
   if (t >= 800 && !(await ranToday("corporate_actions.fetch"))) await safe("corporate_actions.fetch", () => runFeeds(["ca"]));
   if (t >= 2330 && !(await ranToday("valuations.daily"))) await safe("valuations.daily", () => recordRun("valuations.daily", async () => { const r = await snapshotValuations(); await recordRun("twr.refresh", () => refreshPerformanceCache()); return r; }));
   if (t >= 900 && !(await ranToday("prices.stale"))) await safe("prices.stale", () => recordRun("prices.stale", () => stalePriceTasks()));
