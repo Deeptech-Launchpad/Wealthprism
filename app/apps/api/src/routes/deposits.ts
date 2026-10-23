@@ -5,6 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireFamily, requireRole } from "../lib/auth.js";
 import { syncOutflows } from "../lib/balance.js";
+import { generateTasksFor } from "../jobs/tasks.js";
 import { withFamily, money } from "../lib/db.js";
 import { generateDepositSchedule, depositCurrentValue, interestSettled, estimateForeclosure, foreclosureEligibility } from "@fo/finance";
 
@@ -89,7 +90,7 @@ async function depositView(c: any, row: any) {
     credit_receipt_id: fc?.id ?? null, expected_amount: fc?.expected_amount ?? null, received_amount: fc?.received_amount ?? null, credit_status: fc?.status ?? null, verified_by_statement: !!fc?.bank_txn_ref, summary } : null;
   return { ...row, foreclose, closure, start_date: startDate, maturity_date: maturityDate, principal: row.principal == null ? null : money(row.principal),
     installment_amount: row.installment_amount == null ? null : money(row.installment_amount), rate_pct: Number(row.rate_pct),
-    current_value: money(depositCurrentValue({ kind: row.kind, principal: row.principal, startDate, maturityDate, ratePct: Number(row.rate_pct), paid: receipts.filter((r: any) => r.kind === "contribution" && Number(r.received_amount) > 0).map((r: any) => ({ a: r.received_amount, on: r.received_on ?? r.due_date })) }, maturityAmount, today)), maturity_value: money(maturityAmount), receipts, locked: lock.locked, locked_reason: lock.reason };
+    current_value: money(depositCurrentValue({ kind: row.kind, principal: row.principal, startDate, maturityDate, ratePct: Number(row.rate_pct), paid: receipts.filter((r: any) => r.kind === "contribution" && Number(r.received_amount) > 0).map((r: any) => ({ a: r.received_amount, on: r.received_on ?? r.due_date })) }, maturityAmount, today)), maturity_value: money(maturityAmount), matured_on: row.status === "closed" ? (maturityRow?.received_on ?? null) : null, maturity_receipt_id: row.status === "active" && maturityRow && maturityRow.status !== "received" ? maturityRow.id : null, days_to_maturity: Math.round((Date.parse(maturityDate) - Date.parse(today)) / 86400000), receipts, locked: lock.locked, locked_reason: lock.reason };
 }
 
 export default async function routes(app: FastifyInstance) {
@@ -105,7 +106,7 @@ export default async function routes(app: FastifyInstance) {
   /** The reference list behind the Type dropdown (same for every family). */
   app.get("/deposit-types", async (req) => withFamily(req.family!.familyId, async (c) => (await c.query("select code, kind, label, description, break_rule, lock_in_months, default_penalty_pct::float as default_penalty_pct, default_payout, default_tds, min_tenure_months, max_tenure_months, partial_withdrawal from deposit_types order by kind, sort")).rows));
   app.get("/deposits", async (req) => withFamily(req.family!.familyId, async (c) => {
-    const rows = (await c.query(`${DEPOSIT_SQL} where d.family_id=$1 and (d.status='active' or ($2::boolean and d.status='premature_closed')) order by d.status, d.maturity_date`, [req.family!.familyId, (req.query as any)?.status === "all"])).rows;
+    const rows = (await c.query(`${DEPOSIT_SQL} where d.family_id=$1 and (d.status='active' or ($2::boolean and d.status in ('premature_closed','closed'))) order by d.status, d.maturity_date`, [req.family!.familyId, (req.query as any)?.status === "all"])).rows;
     const out = []; for (const r of rows) out.push(await depositView(c, r)); return out;
   }));
   app.get("/deposits/:id", async (req, reply) => withFamily(req.family!.familyId, async (c) => {
@@ -142,7 +143,7 @@ export default async function routes(app: FastifyInstance) {
         // the maturity payout ends the deposit: its value leaves net worth as the cash arrives
         if (row.kind === "maturity") await c.query("update deposits set status='closed', updated_at=now() where id=$1", [row.deposit_id]);
       }
-      await syncOutflows(c, fam);
+      await syncOutflows(c, fam); await generateTasksFor(c, fam);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'receive','deposit_receipts',$3,$4)", [fam, req.user!.id, id, JSON.stringify({ ...b, status, total })]);
       return { ...(await depositView(c, (await c.query(`${DEPOSIT_SQL} where d.id=$1`, [row.deposit_id])).rows[0])), balance_note: balanceNote };
     });
@@ -267,7 +268,7 @@ export default async function routes(app: FastifyInstance) {
         await c.query("delete from deposit_receipts where deposit_id=$1", [id]);
         rows = await writeSchedule(c, fam, id, { kind: cur.kind, startDate: m.start_date, maturityDate: m.maturity_date, ratePct: Number(m.rate_pct), principal: m.principal == null ? undefined : Number(m.principal), installmentAmount: m.installment_amount == null ? undefined : Number(m.installment_amount), tenureMonths: m.tenure_months == null ? undefined : Number(m.tenure_months), payoutFrequency: m.payout_frequency });
       }
-      if (termsChanged) await syncOutflows(c, fam);
+      if (termsChanged) await syncOutflows(c, fam); await generateTasksFor(c, fam);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, before, after) values ($1,$2,'update','deposits',$3,$4,$5)", [fam, req.user!.id, id, JSON.stringify({ bank: cur.bank, account_no: cur.account_no, rate_pct: cur.rate_pct, principal: cur.principal, installment_amount: cur.installment_amount, start_date: cur.start_date, maturity_date: cur.maturity_date }), JSON.stringify({ ...b, schedule_rebuilt: termsChanged, schedule_rows: rows })]);
       return depositView(c, (await c.query(`${DEPOSIT_SQL} where d.id=$1`, [id])).rows[0]);
     });
@@ -305,7 +306,7 @@ export default async function routes(app: FastifyInstance) {
           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id`,
         [fam, b.entity_id, b.kind, b.bank, b.account_no ?? null, b.bucket, b.principal ?? null, b.installment_amount ?? null, b.rate_pct, b.start_date, maturityDate, b.tenure_months ?? null, payoutFrequency, b.payout_bank_account_id ?? null, b.tds_applicable, typeCode])).rows[0];
       const rows = await writeSchedule(c, fam, row.id, { kind: b.kind, startDate: b.start_date, maturityDate, ratePct: b.rate_pct, principal: b.principal, installmentAmount: b.installment_amount, tenureMonths: b.tenure_months, payoutFrequency });
-      await syncOutflows(c, fam);
+      await syncOutflows(c, fam); await generateTasksFor(c, fam);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'create','deposits',$3,$4)", [fam, req.user!.id, row.id, JSON.stringify({ ...b, schedule_rows: rows })]);
       return void reply.code(201).send(await depositView(c, (await c.query(`${DEPOSIT_SQL} where d.id=$1`, [row.id])).rows[0]));
     });

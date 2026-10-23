@@ -41,6 +41,14 @@ export const generators: Generator[] = [
     return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "investments", title: `RD instalment ₹${Number(r.expected_amount).toLocaleString("en-IN")} due ${fmt(r.due_date)}: ${r.bank}${r.account_no ? ` · ${r.account_no}` : ""}`, reason: `Keep the balance in ${r.acct}; if it is not auto-debited, pay it and click Mark paid`, amount: Number(r.expected_amount), due_date: iso(r.due_date), severity: 2 as const, source_type: "deposit_receipt", source_id: r.id, verification: "pending" as const })),
       resolved: (await c.query("select id from deposit_receipts where status='received'")).rows.map((r) => ({ source_type: "deposit_receipt", source_id: r.id })) };
   } },
+  { name: "deposit_maturing", run: async (c, fam, today) => {
+    // a heads-up a month before the money is due back, so the family can decide to renew, move or reinvest it; receiving the maturity (or an import match) resolves it
+    const rows = (await c.query(`select r.id, r.due_date::text due_date, r.expected_amount, d.bank, d.account_no, d.entity_id, (r.due_date - $1::date) days, coalesce(b.bank||' '||b.account_masked, 'the linked account') acct
+        from deposit_receipts r join deposits d on d.id=r.deposit_id left join bank_accounts b on b.id=d.payout_bank_account_id
+        where d.status='active' and r.kind='maturity' and r.status='expected' and r.due_date between $1::date and $1::date + 30`, [today])).rows;
+    return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "investments", title: `Maturing ${r.days === 0 ? "today" : `in ${r.days} d`}: ${r.bank}${r.account_no ? ` · ${r.account_no}` : ""}`, reason: `₹${Number(r.expected_amount).toLocaleString("en-IN")} is due back on ${fmt(r.due_date)} into ${r.acct}. Decide: renew, withdraw or reinvest — then click Receive when the bank credits it.`, amount: Number(r.expected_amount), due_date: iso(r.due_date), severity: 2 as const, source_type: "deposit_receipt", source_id: r.id, verification: "pending" as const })),
+      resolved: (await c.query("select id from deposit_receipts where status='received'")).rows.map((r) => ({ source_type: "deposit_receipt", source_id: r.id })) };
+  } },
   { name: "deposit_foreclosure", run: async (c, fam, today) => {
     // a closed-early deposit's money must show up: remind after 3 days with no credit seen, and whenever a credit was found but differs from what was recorded
     const rows = (await c.query(`select r.id, r.due_date, r.expected_amount, r.received_amount, r.status, d.bank, d.account_no, d.entity_id, ($1::date - r.due_date) days
