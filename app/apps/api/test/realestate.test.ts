@@ -46,13 +46,13 @@ describe("properties", () => {
     expect(rc.active_lease.tenant).toBe("Kovai Analytics Pvt Ltd"); expect(rc.gross_yield_pct).toBeCloseTo((2850 * 12 / 480000) * 100, 1);
     const detail = (await get(`/properties/${RACE_COURSE}`)).body;
     expect(Number(detail.pnl_fytd.rent)).toBeGreaterThan(0); expect(Number(detail.pnl_fytd.property_tax)).toBe(482); expect(Number(detail.pnl_fytd.expenses)).toBe(220);
-    expect(Number(detail.pnl_fytd.net)).toBeCloseTo(Number(detail.pnl_fytd.rent) - 482 - 220, 2);
+    expect(Number(detail.pnl_fytd.net)).toBeCloseTo(Number(detail.pnl_fytd.rent) - 482 - 220 - Number(detail.pnl_fytd.loan_interest), 2);   // interest of paid EMIs on a linked loan is a cost too
     expect(detail.valuations.length).toBe(1); expect(detail.leases.length).toBe(1); expect(typeof detail.net_yield_pct).toBe("number");
 
     const bad = await send("POST", "/properties", { type: "residential", name: "Flat", owners: [{ entity_id: HUF, ownership_pct: 60 }] });
     expect(bad.code).toBe(422);
     const created = await send("POST", "/properties", { type: "residential", name: "RS Puram flat", address: { city: "Coimbatore", state: "TN" }, acquisition_date: "2021-06-15", acquisition_cost: 250000, stamp_duty: 17500, registration: 2500, owners: [{ entity_id: HUF, ownership_pct: 60 }, { entity_id: SPOUSE, ownership_pct: 40 }] });
-    expect(created.code).toBe(201); expect(created.body.owners.length).toBe(2); expect(created.body.current_value).toBe("0.00"); expect(created.body.gross_yield_pct).toBeNull();
+    expect(created.code).toBe(201); expect(created.body.owners.length).toBe(2); expect(created.body.current_value).toBe("250000.00"); expect(created.body.gross_yield_pct).toBe(0);
     const pid = created.body.id;
     const val = await send("POST", `/properties/${pid}/valuations`, { valued_on: "2026-09-01", value: 310000, source: "Broker quote" });
     expect(val.code).toBe(201);

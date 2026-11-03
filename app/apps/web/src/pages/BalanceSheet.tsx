@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Plus, Trash2, RefreshCw, CheckCircle2, ShieldAlert, Users } from "lucide-react";
 import { useApi } from "../lib/useApi";
 import { api, apiJson, inr, session } from "../lib/api";
 import { Card, Pill, Status, fmtDate } from "../components";
+import { AddAsset } from "./AddAsset";
 
 // Balance sheet (PRD 3.11): net worth with look-through, liabilities and schedules, insurance adequacy, lifestyle assets, ownership graph, succession gaps.
 const inp = { background: "#fff", color: "var(--ink)", borderColor: "var(--line)" } as const;
@@ -16,7 +17,7 @@ function useAction(after?: () => void) {
   const run = async (l: string, fn: () => Promise<string | void>) => { setBusy(l); setErr(""); setNote(""); try { const n = await fn(); if (n) setNote(n); after?.(); } catch (e: any) { setErr(e.message); } finally { setBusy(""); } };
   return { busy, err, note, run, msg: <>{err && <div className="err">{err}</div>}{note && <div className="small" style={{ color: "var(--teal)" }}>{note}</div>}</> };
 }
-const TABS = ["Net worth", "Liabilities", "Insurance", "Lifestyle assets", "Ownership", "Succession"] as const;
+const TABS = ["Net worth", "Liabilities", "Insurance", "Physical assets", "Ownership", "Succession"] as const;
 
 export function BalanceSheet() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Net worth");
@@ -25,7 +26,7 @@ export function BalanceSheet() {
     {tab === "Net worth" && <NetWorth />}
     {tab === "Liabilities" && <Liabilities />}
     {tab === "Insurance" && <Insurance />}
-    {tab === "Lifestyle assets" && <Lifestyle />}
+    {tab === "Physical assets" && <Lifestyle />}
     {tab === "Ownership" && <Ownership />}
     {tab === "Succession" && <Succession />}
   </>);
@@ -100,7 +101,7 @@ function Liabilities() {
 }
 
 function Insurance() {
-  const [tick, setTick] = useState(0); const { data, error, loading } = useApi<any[]>("/insurance-policies", [tick]); const ad = useApi<any>("/insurance/adequacy", [tick]); const act = useAction(() => setTick((t) => t + 1));
+  const [tick, setTick] = useState(0); const { data, error, loading } = useApi<any[]>("/insurance-policies", [tick]); const ad = useApi<any>("/insurance/adequacy", [tick]); const act = useAction(() => setTick((t) => t + 1)); const [editP, setEditP] = useState<any | null>(null); const [addP, setAddP] = useState(false);
   if (loading || error) return <Status loading={loading} error={error} />;
   const rows = data!; const a = ad.data;
   return (<>
@@ -110,9 +111,10 @@ function Insurance() {
       <Card><div className="mute">Uninsured assets</div><div className="big-num" style={{ color: a.uninsured.length ? "var(--red)" : "var(--teal)" }}>{a.uninsured.length}</div><div className="small mute">{a.uninsured.map((u: any) => u.name).join(", ") || "everything insurable is covered"}</div></Card>
     </div>}
     {act.msg}
-    <Card title="Policies"><table className="tbl"><thead><tr><th>Insurer</th><th>Kind</th><th>Entity</th><th style={{ textAlign: "right" }}>Sum assured</th><th style={{ textAlign: "right" }}>Premium</th><th>Next due</th><th>Nominee</th><th></th></tr></thead><tbody>
+    {(addP || editP) && <AddAsset only="insurance" editing={editP ? { category: "insurance", row: editP } : undefined} onClose={() => { setAddP(false); setEditP(null); }} onSaved={() => { setAddP(false); setEditP(null); setTick((t) => t + 1); }} />}
+    <Card title="Policies" action={canWrite() && <button className="btn btn-s btn-p" onClick={() => setAddP(true)}>+ Add policy</button>}><table className="tbl"><thead><tr><th>Insurer</th><th>Kind</th><th>Entity</th><th style={{ textAlign: "right" }}>Sum assured</th><th style={{ textAlign: "right" }}>Premium</th><th>Next due</th><th>Nominee</th><th></th></tr></thead><tbody>
       {rows.map((p) => <tr key={p.id}><td>{p.insurer}<div className="small mute">{p.policy_no_masked ?? ""}</div></td><td>{label(p.kind)}{p.fund_value && <div className="small mute">fund {inr(p.fund_value)}</div>}</td><td>{p.entity_name}</td><td style={{ textAlign: "right" }}>{inr(p.sum_assured)}</td><td style={{ textAlign: "right" }}>{inr(p.premium)} <span className="small mute">{label(p.premium_frequency)}</span></td><td>{p.next_premium_due ? <Pill tone={p.next_premium_due <= new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10) ? "amber" : undefined}>{fmtDate(p.next_premium_due)}</Pill> : "—"}</td><td>{p.nominee ?? <span className="mute">—</span>}</td>
-        <td>{canWrite() && p.next_premium_due && <button className="btn btn-s" onClick={() => act.run("paid", async () => { await api(`/insurance-policies/${p.id}/premium-paid`, { method: "POST", body: "{}" }); return "Premium recorded; next due rolled forward"; })}>Premium paid</button>}</td></tr>)}
+        <td>{canWrite() && <button className="btn btn-s" onClick={() => setEditP(p)}>Edit</button>} {canWrite() && p.next_premium_due && <button className="btn btn-s" onClick={() => { if (!confirm(`Record the ${p.insurer} premium of ${inr(p.premium)} as paid? The next due date moves forward by one period from ${fmtDate(p.next_premium_due)}.`)) return; act.run("paid", async () => { await api(`/insurance-policies/${p.id}/premium-paid`, { method: "POST", body: "{}" }); return "Premium recorded; next due rolled forward"; }); }}>Premium paid</button>}</td></tr>)}
     </tbody></table></Card>
     {a && <div className="grid-2">
       <Card title="Health cover per member"><table className="tbl"><thead><tr><th>Member</th><th style={{ textAlign: "right" }}>Cover</th><th>Policies</th></tr></thead><tbody>{a.health.map((h: any) => <tr key={h.member}><td>{h.member}</td><td style={{ textAlign: "right" }}>{inr(h.health_cover)}</td><td className="small mute">{h.policies.join(", ") || "none"}</td></tr>)}</tbody></table></Card>
@@ -122,14 +124,17 @@ function Insurance() {
 }
 
 function Lifestyle() {
-  const [tick, setTick] = useState(0); const { data, error, loading } = useApi<any[]>("/lifestyle-assets", [tick]); const act = useAction(() => setTick((t) => t + 1)); const [val, setVal] = useState<{ id: string; value: string; on: string } | null>(null);
+  const [tick, setTick] = useState(0); const { data, error, loading } = useApi<any[]>("/lifestyle-assets", [tick]); const act = useAction(() => setTick((t) => t + 1)); const [val, setVal] = useState<{ id: string; value: string; on: string } | null>(null); const [editA, setEditA] = useState<any | null>(null); const [addA, setAddA] = useState(false);
   if (loading || error) return <Status loading={loading} error={error} />;
-  return (<Card title="Lifestyle assets" action={<span className="small mute">counted in net worth only when included · insured via a linked policy</span>}>
+  const groupOf = (a: any) => ["gold", "silver", "jewellery"].includes(a.kind) ? "Gold, silver and jewellery" : "Other valuables";
+  const sorted = [...data!].sort((a, b) => groupOf(a).localeCompare(groupOf(b)) * -1 || String(a.name).localeCompare(String(b.name)));
+  return (<Card title="Physical assets" action={<span className="row gap"><span className="small mute">counted in net worth only when included · insured via a linked policy</span>{canWrite() && <button className="btn btn-s btn-p" onClick={() => setAddA(true)}>+ Add asset</button>}</span>}>
     {act.msg}
+    {(addA || editA) && <AddAsset only="physical" editing={editA ? { category: "physical", row: editA } : undefined} onClose={() => { setAddA(false); setEditA(null); }} onSaved={() => { setAddA(false); setEditA(null); setTick((t) => t + 1); }} />}
     <table className="tbl"><thead><tr><th>Asset</th><th>Kind</th><th>Entity</th><th style={{ textAlign: "right" }}>Cost</th><th style={{ textAlign: "right" }}>Value</th><th>Valued</th><th>Insured</th><th>In net worth</th><th></th></tr></thead><tbody>
-      {data!.map((a) => <tr key={a.id}><td>{a.name}<div className="small mute">{a.location ?? ""}</div></td><td>{a.kind}</td><td>{a.entity_name}</td><td style={{ textAlign: "right" }}>{a.cost ? inr(a.cost) : "—"}</td><td style={{ textAlign: "right" }}>{a.current_value ? inr(a.current_value) : "—"}</td><td>{fmtDate(a.valued_on)}<div className="small mute">{a.valuation_source ?? ""}</div></td><td>{a.insurer ? <Pill tone="teal">{a.insurer}</Pill> : <Pill tone="amber">uninsured</Pill>}</td>
+      {sorted.map((a, i) => <Fragment key={a.id}>{(i === 0 || groupOf(sorted[i - 1]) !== groupOf(a)) && <tr><td colSpan={9} style={{ background: "var(--paper)" }}><b>{groupOf(a)}</b></td></tr>}<tr><td>{a.name}<div className="small mute">{a.location ?? ""}</div></td><td>{a.kind}</td><td>{a.entity_name}</td><td style={{ textAlign: "right" }}>{a.cost ? inr(a.cost) : "—"}</td><td style={{ textAlign: "right" }}>{a.current_value ? inr(a.current_value) : "—"}</td><td>{fmtDate(a.valued_on)}<div className="small mute">{a.valuation_source ?? ""}</div></td><td>{a.insurer ? <Pill tone="teal">{a.insurer}</Pill> : <Pill tone="amber">uninsured</Pill>}</td>
         <td>{canWrite() ? <input type="checkbox" checked={!!a.include_in_net_worth} onChange={(e) => act.run("inc", async () => { await api(`/lifestyle-assets/${a.id}`, { method: "PATCH", body: JSON.stringify({ include_in_net_worth: e.target.checked }) }); })} /> : a.include_in_net_worth ? "yes" : "no"}</td>
-        <td>{canWrite() && (val && val.id === a.id ? <span className="row" style={{ gap: 4 }}><input style={{ ...inp, width: 110 }} type="number" value={val.value} onChange={(e) => setVal({ id: a.id, on: val.on, value: e.target.value })} /><input style={{ ...inp, width: 140 }} type="date" value={val.on} onChange={(e) => setVal({ id: a.id, value: val.value, on: e.target.value })} /><button className="btn btn-s" onClick={() => act.run("val", async () => { const v = val; await api(`/lifestyle-assets/${a.id}/valuations`, { method: "POST", body: JSON.stringify({ valued_on: v.on, value: Number(v.value), source: "manual" }) }); setVal(null); })}>Save</button></span> : <button className="btn btn-s" onClick={() => setVal({ id: a.id, value: a.current_value ?? "", on: new Date().toISOString().slice(0, 10) })}>Revalue</button>)}</td></tr>)}
+        <td>{canWrite() && (val && val.id === a.id ? <span className="row" style={{ gap: 4 }}><input style={{ ...inp, width: 110 }} type="number" value={val.value} onChange={(e) => setVal({ id: a.id, on: val.on, value: e.target.value })} /><input style={{ ...inp, width: 140 }} type="date" value={val.on} onChange={(e) => setVal({ id: a.id, value: val.value, on: e.target.value })} /><button className="btn btn-s" onClick={() => act.run("val", async () => { const v = val; await api(`/lifestyle-assets/${a.id}/valuations`, { method: "POST", body: JSON.stringify({ valued_on: v.on, value: Number(v.value), source: "manual" }) }); setVal(null); })}>Save</button></span> : <span className="row gap"><button className="btn btn-s" onClick={() => setVal({ id: a.id, value: a.current_value ?? "", on: new Date().toISOString().slice(0, 10) })}>Revalue</button><button className="btn btn-s" onClick={() => setEditA(a)}>Edit</button></span>)}</td></tr></Fragment>)}
     </tbody></table>
   </Card>);
 }

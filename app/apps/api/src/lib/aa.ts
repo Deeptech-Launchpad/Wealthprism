@@ -9,6 +9,8 @@ import { parseAaDeposit } from "@fo/parsers";
 import { pool, withFamily, money } from "./db.js";
 const KEY = () => process.env.FIELD_ENCRYPTION_KEY ?? "dev-only-field-key";
 import { applyBankTxn, reconcileRent, reconcileDeposits } from "../routes/imports.js";
+import { reconcileHoldingReceipts } from "./holdingreceipts.js";
+import { reconcileSavingsDeposits } from "./savings.js";
 import { detectTransfers, BankingError } from "./banking.js";
 import { notifyTask } from "./notify.js";
 import { emitEvent } from "./opendata.js";
@@ -177,7 +179,7 @@ export async function syncConsent(c: pg.PoolClient, familyId: string, consentId:
   const provider = opts.provider ?? providerFor(consent.provider); const day = opts.day ?? today();
   const keys: KeyPair | null = consent.key_material ? JSON.parse(decryptSecret(consent.key_material, KEY())) : null;
   const from = consent.last_fetch_at ? new Date(new Date(consent.last_fetch_at).getTime() - 3 * 86400000).toISOString().slice(0, 10) : consent.data_from ? iso(consent.data_from)! : addMonths(day, -12);
-  const out = { consent_id: consentId, provider: provider.name, accounts: 0, txns_new: 0, txns_dup: 0, rent_matched: 0, deposits_matched: 0, transfers: 0, balances: [] as { bank_account_id: string; balance: string }[], errors: [] as string[] };
+  const out = { consent_id: consentId, provider: provider.name, accounts: 0, txns_new: 0, txns_dup: 0, rent_matched: 0, deposits_matched: 0, bond_payments_matched: 0, transfers: 0, balances: [] as { bank_account_id: string; balance: string }[], errors: [] as string[] };
   await c.query("savepoint aa_sync");
   try {
     const fis = await provider.fetch({ consent, accounts, keys, from, to: day, day });
@@ -192,7 +194,7 @@ export async function syncConsent(c: pg.PoolClient, familyId: string, consentId:
       await c.query("insert into aa_fetches (family_id, consent_id, bank_account_id, from_date, to_date, txns_new, txns_dup, balance, status) values ($1,$2,$3,$4,$5,$6,$7,$8,'ok')", [familyId, consentId, acct.id, from, day, added, dup, parsed.balance ?? null]);
       out.accounts++; out.txns_new += added; out.txns_dup += dup; out.balances.push({ bank_account_id: acct.id, balance: money(parsed.balance ?? acct.balance) });
     }
-    if (out.txns_new) { out.rent_matched = await reconcileRent(c, familyId); out.deposits_matched = await reconcileDeposits(c, familyId); out.transfers = (await detectTransfers(c, familyId)).rows; }
+    if (out.txns_new) { out.rent_matched = await reconcileRent(c, familyId); out.deposits_matched = await reconcileDeposits(c, familyId); out.bond_payments_matched = await reconcileHoldingReceipts(c, familyId); await reconcileSavingsDeposits(c, familyId); out.transfers = (await detectTransfers(c, familyId)).rows; }
     await c.query("update aa_consents set last_fetch_at=now(), next_fetch_at=now() + interval '4 hours', fetch_error=null, updated_at=now() where id=$1", [consentId]);
     if (out.txns_new) await emitEvent(c, familyId, "bank.synced", { consent_id: consentId, accounts: out.accounts, txns_new: out.txns_new }).catch(() => null);
   } catch (e: any) {

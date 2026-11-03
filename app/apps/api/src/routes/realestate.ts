@@ -5,17 +5,21 @@ import { withFamily, money } from "../lib/db.js";
 import { generateRentSchedule, gstSplit, fyOf, fyStart, propertyPnl } from "@fo/finance";
 import { ensureGstReturns } from "../jobs/tasks.js";
 
-const iso = (d: any) => (d ? new Date(d).toISOString().slice(0, 10) : null);
+// a pg DATE arrives as local midnight: read the local calendar day, so a machine east of UTC does not show it a day early
+const iso = (d: any) => { if (!d) return null; if (typeof d === "string") return d.slice(0, 10); const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const moneyIn = z.union([z.number(), z.string()]).transform((v) => Number(v));
 const WRITERS = requireRole("owner", "member", "operator");
 
 const PROPERTY_SQL = `
   select p.id, p.type, p.name, p.address, p.acquisition_date, p.acquisition_cost, p.stamp_duty, p.registration, p.self_occupied, p.bucket, p.status,
+    p.area_value, p.area_unit, p.built_up_sqft, p.carpet_sqft, p.survey_no, p.patta_no, p.land_use, p.unit_no, p.registration_no, p.sub_registrar, p.boundaries,
     (select value from property_valuations v where v.property_id = p.id order by valued_on desc limit 1) as current_value,
     (select valued_on from property_valuations v where v.property_id = p.id order by valued_on desc limit 1) as valued_on,
-    (select json_build_object('id', l.id, 'rent', l.rent, 'start_date', l.start_date, 'end_date', l.end_date, 'due_day', l.due_day, 'gst_applicable', l.gst_applicable, 'tds_applicable', l.tds_applicable, 'escalation_pct', l.escalation_pct, 'deposit', l.deposit, 'notice_days', l.notice_days, 'tenant', t.name, 'tenant_id', t.id, 'status', l.status)
+    (select json_build_object('id', l.id, 'rent', l.rent, 'start_date', l.start_date, 'end_date', l.end_date, 'due_day', l.due_day, 'gst_applicable', l.gst_applicable, 'tds_applicable', l.tds_applicable, 'escalation_pct', l.escalation_pct, 'deposit', l.deposit, 'notice_days', l.notice_days, 'lease_kind', l.lease_kind, 'tenant', t.name, 'tenant_id', t.id, 'status', l.status)
        from leases l join tenants t on t.id = l.tenant_id where l.property_id = p.id and l.status = 'active' order by l.end_date desc limit 1) as active_lease,
+    (select coalesce(sum(outstanding),0) from liabilities q where q.secured_by_type='property' and q.secured_by_id=p.id and q.deleted_at is null and q.status='active') as loan_outstanding,
+    (select coalesce(sum(emi),0) from liabilities q where q.secured_by_type='property' and q.secured_by_id=p.id and q.deleted_at is null and q.status='active') as loan_emi,
     (select json_agg(json_build_object('entity_id', o.entity_id, 'name', e.name, 'ownership_pct', o.ownership_pct)) from property_owners o join entities e on e.id = o.entity_id where o.property_id = p.id) as owners
   from properties p where p.deleted_at is null`;
 
@@ -23,21 +27,55 @@ async function pnlFor(c: any, propertyId: string, today: string) {
   const from = fyStart(fyOf(today));
   const rent = Number((await c.query("select coalesce(sum(rs.received_amount),0) v from rent_schedule rs join leases l on l.id=rs.lease_id where l.property_id=$1 and rs.period_month >= $2", [propertyId, from])).rows[0].v);
   const tax = Number((await c.query("select coalesce(sum(amount),0) v from property_taxes where property_id=$1 and status='paid' and paid_on >= $2", [propertyId, from])).rows[0].v);
-  const exp = Number((await c.query("select coalesce(sum(amount),0) v from property_expenses where property_id=$1 and not capital_improvement and expense_date >= $2", [propertyId, from])).rows[0].v);
+  const linked = "exists (select 1 from liabilities q where q.secured_by_type='property' and q.secured_by_id=$1 and q.deleted_at is null)";
+  const exp = Number((await c.query(`select coalesce(sum(amount),0) v from property_expenses where property_id=$1 and not capital_improvement and expense_date >= $2 and not (category='loan_interest' and ${linked})`, [propertyId, from])).rows[0].v);
+  // interest part of the EMIs actually paid this financial year, on loans linked to this property
+  const interest = Number((await c.query("select coalesce(sum(s.interest),0) v from liability_schedule s join liabilities l on l.id=s.liability_id where l.secured_by_type='property' and l.secured_by_id=$1 and l.deleted_at is null and s.paid_on >= $2", [propertyId, from])).rows[0].v);
   const capex = Number((await c.query("select coalesce(sum(amount),0) v from property_expenses where property_id=$1 and capital_improvement", [propertyId])).rows[0].v);
-  return { rent, tax, exp, capex };
+  return { rent, tax, exp, capex, interest };
 }
-function shapeProperty(p: any, pnl?: { rent: number; tax: number; exp: number; capex: number }) {
+// square feet in one of each unit (1 cent = 435.6 sq ft, 1 ground = 2,400 sq ft, 1 acre = 43,560 sq ft)
+const SQFT_PER: Record<string, number> = { sqft: 1, sqm: 10.7639, cent: 435.6, ground: 2400, acre: 43560, hectare: 107639.1 };
+const DETAIL_TEXT = ["survey_no", "patta_no", "unit_no", "registration_no", "sub_registrar", "boundaries"] as const;
+const DETAIL_NUM = ["area_value", "built_up_sqft", "carpet_sqft"] as const;
+function shapeProperty(p: any, pnl?: { rent: number; tax: number; exp: number; capex: number; interest: number }) {
+  const areaSqft = p.area_value && p.area_unit ? Number(p.area_value) * SQFT_PER[p.area_unit] : (p.built_up_sqft ? Number(p.built_up_sqft) : 0);
+  const cost = Number(p.acquisition_cost);
+  const loan = Number(p.loan_outstanding ?? 0), emi = Number(p.loan_emi ?? 0), monthlyRent = p.active_lease?.rent ? Number(p.active_lease.rent) : 0;
   const rent = p.active_lease?.rent ? Number(p.active_lease.rent) : 0;
   const value = Number(p.current_value ?? 0);
-  const y = pnl ? propertyPnl({ rentReceived: pnl.rent, propertyTax: pnl.tax, expenses: pnl.exp, currentValue: value, annualRent: rent * 12 }) : null;
-  return { ...p, current_value: money(p.current_value), acquisition_cost: money(p.acquisition_cost), stamp_duty: money(p.stamp_duty), registration: money(p.registration), valued_on: iso(p.valued_on), acquisition_date: iso(p.acquisition_date),
+  const y = pnl ? propertyPnl({ rentReceived: pnl.rent, propertyTax: pnl.tax, expenses: pnl.exp + pnl.interest, currentValue: value, annualRent: rent * 12 }) : null;
+  return { ...p, area_value: p.area_value == null ? null : Number(p.area_value), built_up_sqft: p.built_up_sqft == null ? null : Number(p.built_up_sqft), carpet_sqft: p.carpet_sqft == null ? null : Number(p.carpet_sqft),
+    area_sqft: areaSqft ? Math.round(areaSqft * 100) / 100 : null, cost_per_sqft: areaSqft && cost ? Math.round(cost / areaSqft) : null,
+    loan_outstanding: money(loan), loan_emi: money(emi), equity: money(Number(p.current_value ?? 0) - loan), monthly_cash_flow: money(monthlyRent - emi),
+    current_value: money(p.current_value), acquisition_cost: money(p.acquisition_cost), stamp_duty: money(p.stamp_duty), registration: money(p.registration), valued_on: iso(p.valued_on), acquisition_date: iso(p.acquisition_date),
     gross_yield_pct: value ? +(((rent * 12) / value) * 100).toFixed(2) : null, net_yield_pct: y?.netYieldPct ?? null,
-    ...(pnl ? { pnl_fytd: { rent: money(pnl.rent), property_tax: money(pnl.tax), expenses: money(pnl.exp), net: money(y!.net) }, capital_improvements: money(pnl.capex), cost_of_acquisition: money(Number(p.acquisition_cost) + Number(p.stamp_duty) + Number(p.registration) + pnl.capex) } : {}) };
+    ...(pnl ? { pnl_fytd: { rent: money(pnl.rent), property_tax: money(pnl.tax), expenses: money(pnl.exp), loan_interest: money(pnl.interest), net: money(y!.net) }, capital_improvements: money(pnl.capex), cost_of_acquisition: money(Number(p.acquisition_cost) + Number(p.stamp_duty) + Number(p.registration) + pnl.capex) } : {}) };
 }
 const propertyInput = z.object({ type: z.enum(["residential", "commercial", "land", "under_construction"]), name: z.string().min(1), address: z.record(z.any()).optional(), acquisition_date: date.optional().nullable(), acquisition_cost: moneyIn.optional(), stamp_duty: moneyIn.optional(), registration: moneyIn.optional(), self_occupied: z.boolean().optional(), bucket: z.enum(["liquidity", "income", "growth"]).optional(),
+  area_value: z.number().positive().nullable().optional(), area_unit: z.enum(["sqft", "sqm", "cent", "ground", "acre", "hectare"]).nullable().optional(), built_up_sqft: z.number().positive().nullable().optional(), carpet_sqft: z.number().positive().nullable().optional(),
+  land_use: z.enum(["agricultural", "residential_plot", "commercial_plot"]).nullable().optional(), survey_no: z.string().max(120).nullable().optional(), patta_no: z.string().max(120).nullable().optional(), unit_no: z.string().max(120).nullable().optional(), registration_no: z.string().max(120).nullable().optional(), sub_registrar: z.string().max(200).nullable().optional(), boundaries: z.string().max(1000).nullable().optional(),
   owners: z.array(z.object({ entity_id: z.string().uuid(), ownership_pct: z.number().positive().max(100) })).min(1).optional() });
-const leaseInput = z.object({ property_id: z.string().uuid(), tenant_id: z.string().uuid(), entity_gstin_id: z.string().uuid().nullable().optional(), start_date: date, end_date: date, rent: moneyIn, due_day: z.number().int().min(1).max(28).default(5), grace_days: z.number().int().min(0).default(3), escalation_pct: z.number().min(0).default(0), escalation_every_months: z.number().int().positive().nullable().optional(), deposit: moneyIn.default(0), gst_applicable: z.boolean().default(false), gst_rate: z.number().optional(), tds_applicable: z.boolean().default(false), tds_rate: z.number().default(10), notice_days: z.number().int().default(90), document_id: z.string().uuid().optional() });
+const leaseInput = z.object({ lease_kind: z.enum(["rent", "lump_sum"]).default("rent"), property_id: z.string().uuid(), tenant_id: z.string().uuid(), entity_gstin_id: z.string().uuid().nullable().optional(), start_date: date, end_date: date, rent: moneyIn, due_day: z.number().int().min(1).max(28).default(5), grace_days: z.number().int().min(0).default(3), escalation_pct: z.number().min(0).default(0), escalation_every_months: z.number().int().positive().nullable().optional(), deposit: moneyIn.default(0), gst_applicable: z.boolean().default(false), gst_rate: z.number().optional(), tds_applicable: z.boolean().default(false), tds_rate: z.number().default(10), notice_days: z.number().int().default(90), document_id: z.string().uuid().optional() });
+
+// writes only the detail fields that were sent (null clears one)
+async function saveDetails(c: any, id: string, b: any) {
+  const cols = [...DETAIL_NUM, ...DETAIL_TEXT, "area_unit", "land_use"].filter((k) => (b as any)[k] !== undefined);
+  if (!cols.length) return;
+  await c.query(`update properties set ${cols.map((k, i) => `${k}=$${i + 2}`).join(", ")} where id=$1`, [id, ...cols.map((k) => (b as any)[k] === "" ? null : (b as any)[k])]);
+}
+
+// A lump sum held for a tenant has to be handed back on the lease end date. It is listed as a committed outflow so Working capital keeps that money
+// back instead of treating it as free cash to deploy, and it is marked done once the lease is ended.
+export async function syncLeaseRefunds(c: any, familyId: string) {
+  await c.query(`insert into committed_outflows (family_id, entity_id, kind, label, due_date, amount, source_type, source_id, status)
+    select l.family_id, (select o.entity_id from property_owners o where o.property_id=l.property_id order by o.ownership_pct desc limit 1), 'manual', 'Return lump sum to ' || trim(t.name) || ' — ' || p.name, l.end_date, l.deposit, 'lease_refund', l.id, 'pending'
+    from leases l join tenants t on t.id=l.tenant_id join properties p on p.id=l.property_id
+    where l.family_id=$1 and l.lease_kind='lump_sum' and l.status='active' and l.deposit > 0 and p.deleted_at is null
+      and not exists (select 1 from committed_outflows o where o.source_type='lease_refund' and o.source_id=l.id)`, [familyId]);
+  await c.query(`update committed_outflows o set due_date=l.end_date, amount=l.deposit from leases l where o.source_type='lease_refund' and o.source_id=l.id and o.status='pending' and l.status='active' and (o.due_date <> l.end_date or o.amount <> l.deposit)`);
+  await c.query(`update committed_outflows o set status='done' where o.family_id=$1 and o.source_type='lease_refund' and o.status='pending' and not exists (select 1 from leases l where l.id=o.source_id and l.status='active')`, [familyId]);
+}
 
 export default async function routes(app: FastifyInstance) {
   app.addHook("preHandler", requireFamily);
@@ -53,18 +91,24 @@ export default async function routes(app: FastifyInstance) {
     const p = (await c.query(PROPERTY_SQL + " and p.id=$1", [(req.params as any).id])).rows[0];
     if (!p) return void reply.code(404).send({ title: "Not found", status: 404 });
     const valuations = (await c.query("select id, valued_on, value, source, note from property_valuations where property_id=$1 order by valued_on desc", [p.id])).rows.map((v) => ({ ...v, valued_on: iso(v.valued_on), value: money(v.value) }));
-    const leases = (await c.query("select l.*, t.name tenant from leases l join tenants t on t.id=l.tenant_id where l.property_id=$1 order by l.start_date desc", [p.id])).rows.map((l) => ({ ...l, start_date: iso(l.start_date), end_date: iso(l.end_date), rent: money(l.rent), deposit: money(l.deposit) }));
-    return { ...shapeProperty(p, await pnlFor(c, p.id, today())), valuations, leases };
+    const leases = (await c.query("select l.*, t.name tenant from leases l join tenants t on t.id=l.tenant_id where l.property_id=$1 order by l.start_date desc", [p.id])).rows.map((l) => ({ ...l, start_date: iso(l.start_date), end_date: iso(l.end_date), rent: money(l.rent), deposit: money(l.deposit), refunded_on: iso(l.refunded_on), refunded_amount: l.refunded_amount == null ? null : money(l.refunded_amount) }));
+    const loans = (await c.query("select id, kind::text kind, lender, principal_original, outstanding, emi, emi_day, rate_pct, end_date, ltv_pct, (select json_build_object('id', s.id, 'due_date', s.due_date::text, 'amount', s.principal + s.interest) from liability_schedule s where s.liability_id=liabilities.id and s.paid_on is null order by s.due_date limit 1) next_instalment, (select max(s.due_date)::text from liability_schedule s where s.liability_id=liabilities.id) last_instalment, (select coalesce(json_agg(json_build_object('id', s.id, 'due_date', s.due_date::text, 'paid_on', s.paid_on::text, 'principal', s.principal, 'interest', s.interest) order by s.due_date), '[]'::json) from liability_schedule s where s.liability_id=liabilities.id and s.paid_on is not null) paid from liabilities where secured_by_type='property' and secured_by_id=$1 and deleted_at is null and status='active' order by created_at", [p.id])).rows.map((x) => ({ ...x, principal_original: money(x.principal_original), outstanding: money(x.outstanding), emi: x.emi == null ? null : money(x.emi), end_date: iso(x.end_date) }));
+    const closed_loans = (await c.query("select l.id, l.kind::text kind, l.lender, l.principal_original, l.closed_on::text closed_on, l.closed_amount, (select count(*)::int from liability_schedule s where s.liability_id=l.id and s.paid_on is not null) emis_paid, (select coalesce(sum(s.interest),0) from liability_schedule s where s.liability_id=l.id and s.paid_on is not null) interest_paid from liabilities l where l.secured_by_type='property' and l.secured_by_id=$1 and l.deleted_at is null and l.status='closed' order by l.closed_on desc nulls last", [p.id])).rows.map((x) => ({ ...x, principal_original: money(x.principal_original), closed_amount: x.closed_amount == null ? null : money(x.closed_amount), interest_paid: money(x.interest_paid) }));
+    return { ...shapeProperty(p, await pnlFor(c, p.id, today())), valuations, leases, loans, closed_loans };
   }));
   app.post("/properties", { preHandler: WRITERS }, async (req, reply) => {
     const b = propertyInput.parse(req.body);
     const owners = b.owners ?? [];
     if (owners.length && Math.abs(owners.reduce((s, o) => s + o.ownership_pct, 0) - 100) > 0.01) return void reply.code(422).send({ title: "Ownership must total 100%", status: 422 });
+    if (b.area_value && !b.area_unit) return void reply.code(422).send({ title: "Choose the unit for the area (sq ft, cent, acre ...)", status: 422 });
     return withFamily(req.family!.familyId, async (c) => {
       const fam = req.family!.familyId;
       const p = (await c.query("insert into properties (family_id, type, name, address, acquisition_date, acquisition_cost, stamp_duty, registration, self_occupied, bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id", [fam, b.type, b.name, JSON.stringify(b.address ?? {}), b.acquisition_date ?? null, b.acquisition_cost ?? 0, b.stamp_duty ?? 0, b.registration ?? 0, b.self_occupied ?? false, b.bucket ?? "income"])).rows[0];
       const ownerRows = owners.length ? owners : [{ entity_id: (await c.query("select id from entities where deleted_at is null order by created_at, id limit 1")).rows[0].id, ownership_pct: 100 }];
       for (const o of ownerRows) await c.query("insert into property_owners (property_id, entity_id, ownership_pct) values ($1,$2,$3)", [p.id, o.entity_id, o.ownership_pct]);
+      await saveDetails(c, p.id, b);
+      // the purchase price is the first valuation, so a new property counts in the portfolio value straight away
+      if (Number(b.acquisition_cost ?? 0) > 0) await c.query("insert into property_valuations (property_id, valued_on, value, source) values ($1,$2,$3,'acquisition')", [p.id, b.acquisition_date ?? today(), b.acquisition_cost]);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'create','properties',$3,$4)", [fam, req.user!.id, p.id, JSON.stringify(b)]);
       return void reply.code(201).send(shapeProperty((await c.query(PROPERTY_SQL + " and p.id=$1", [p.id])).rows[0]));
     });
@@ -76,11 +120,22 @@ export default async function routes(app: FastifyInstance) {
       const r = await c.query(`update properties set type=coalesce($2,type), name=coalesce($3,name), address=coalesce($4,address), acquisition_date=coalesce($5,acquisition_date), acquisition_cost=coalesce($6,acquisition_cost), stamp_duty=coalesce($7,stamp_duty), registration=coalesce($8,registration), self_occupied=coalesce($9,self_occupied), bucket=coalesce($10,bucket), updated_at=now() where id=$1 and deleted_at is null returning id`,
         [id, b.type ?? null, b.name ?? null, b.address ? JSON.stringify(b.address) : null, b.acquisition_date ?? null, b.acquisition_cost ?? null, b.stamp_duty ?? null, b.registration ?? null, b.self_occupied ?? null, b.bucket ?? null]);
       if (!r.rows[0]) return void reply.code(404).send({ title: "Not found", status: 404 });
+      await saveDetails(c, id, b);
       if (b.owners) { if (Math.abs(b.owners.reduce((s, o) => s + o.ownership_pct, 0) - 100) > 0.01) return void reply.code(422).send({ title: "Ownership must total 100%", status: 422 }); await c.query("delete from property_owners where property_id=$1", [id]); for (const o of b.owners) await c.query("insert into property_owners (property_id, entity_id, ownership_pct) values ($1,$2,$3)", [id, o.entity_id, o.ownership_pct]); }
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'update','properties',$3,$4)", [req.family!.familyId, req.user!.id, id, JSON.stringify(b)]);
       return shapeProperty((await c.query(PROPERTY_SQL + " and p.id=$1", [id])).rows[0]);
     });
   });
+  app.delete("/properties/:id", { preHandler: WRITERS }, async (req, reply) => withFamily(req.family!.familyId, async (c) => {
+    const id = (req.params as any).id;
+    const p = (await c.query("select id, name from properties where id=$1 and deleted_at is null", [id])).rows[0];
+    if (!p) return void reply.code(404).send({ title: "Not found", status: 404 });
+    const lease = (await c.query("select 1 from leases where property_id=$1 and status='active' limit 1", [id])).rows[0];
+    if (lease) return void reply.code(422).send({ title: "This property has an active lease. End or finish the lease before deleting it.", status: 422 });
+    await c.query("update properties set deleted_at=now(), updated_at=now() where id=$1", [id]);
+    await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, before) values ($1,$2,'delete','properties',$3,$4)", [req.family!.familyId, req.user!.id, id, JSON.stringify({ name: p.name })]);
+    return void reply.code(204).send();
+  }));
   app.post("/properties/:id/valuations", { preHandler: WRITERS }, async (req, reply) => {
     const b = z.object({ valued_on: date, value: moneyIn, source: z.string().optional(), note: z.string().optional() }).parse(req.body);
     return withFamily(req.family!.familyId, async (c) => {
@@ -102,7 +157,7 @@ export default async function routes(app: FastifyInstance) {
       return void reply.code(201).send(t);
     });
   });
-  const leaseView = (l: any) => ({ ...l, start_date: iso(l.start_date), end_date: iso(l.end_date), rent: money(l.rent), deposit: money(l.deposit), tenant: { id: l.tenant_id, name: l.tenant_name, pan_last4: l.tenant_pan, gstin: l.tenant_gstin, state_code: l.tenant_state, type: l.tenant_type } });
+  const leaseView = (l: any) => ({ ...l, refunded_on: iso(l.refunded_on), refunded_amount: l.refunded_amount == null ? null : money(l.refunded_amount), start_date: iso(l.start_date), end_date: iso(l.end_date), rent: money(l.rent), deposit: money(l.deposit), tenant: { id: l.tenant_id, name: l.tenant_name, pan_last4: l.tenant_pan, gstin: l.tenant_gstin, state_code: l.tenant_state, type: l.tenant_type } });
   const LEASE_SQL = "select l.*, t.name tenant_name, t.pan_last4 tenant_pan, t.gstin tenant_gstin, t.state_code tenant_state, t.type tenant_type, p.name property from leases l join tenants t on t.id=l.tenant_id join properties p on p.id=l.property_id";
   app.get("/leases", async (req) => withFamily(req.family!.familyId, async (c) => {
     const q = z.object({ property_id: z.string().uuid().optional(), status: z.string().optional() }).parse(req.query);
@@ -113,16 +168,20 @@ export default async function routes(app: FastifyInstance) {
   app.post("/leases", { preHandler: WRITERS }, async (req, reply) => {
     const b = leaseInput.parse(req.body);
     if (b.end_date <= b.start_date) return void reply.code(422).send({ title: "end_date must be after start_date", status: 422 });
+    if (b.lease_kind === "lump_sum" && !(b.deposit > 0)) return void reply.code(422).send({ title: "Enter the lump sum amount the tenant paid", status: 422 });
+    if (b.lease_kind === "rent" && !(b.rent > 0)) return void reply.code(422).send({ title: "Enter the monthly rent", status: 422 });
     if (b.gst_applicable && !b.entity_gstin_id) return void reply.code(422).send({ title: "A GST-applicable lease needs the landlord's GSTIN (entity_gstin_id)", status: 422 });
     return withFamily(req.family!.familyId, async (c) => {
       const fam = req.family!.familyId;
       if (!(await c.query("select 1 from properties where id=$1 and deleted_at is null", [b.property_id])).rows[0]) return void reply.code(404).send({ title: "Property not found", status: 404 });
       const gstRate = b.gst_rate ?? Number((await c.query("select commercial_rent_rate from gst_settings where fy=$1", [fyOf(b.start_date)])).rows[0]?.commercial_rent_rate ?? 18);
-      const l = (await c.query(`insert into leases (family_id, property_id, tenant_id, entity_gstin_id, start_date, end_date, rent, due_day, grace_days, escalation_pct, escalation_every_months, deposit, gst_applicable, gst_rate, tds_applicable, tds_rate, notice_days, document_id)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
-        [fam, b.property_id, b.tenant_id, b.entity_gstin_id ?? null, b.start_date, b.end_date, b.rent, b.due_day, b.grace_days, b.escalation_pct, b.escalation_every_months ?? null, b.deposit, b.gst_applicable, gstRate, b.tds_applicable, b.tds_rate, b.notice_days, b.document_id ?? null])).rows[0];
-      const rows = generateRentSchedule({ startDate: b.start_date, endDate: b.end_date, rent: b.rent, dueDay: b.due_day, escalationPct: b.escalation_pct, escalationEveryMonths: b.escalation_every_months ?? null, gstApplicable: b.gst_applicable, gstRate, tdsApplicable: b.tds_applicable, tdsRate: b.tds_rate });
+      const l = (await c.query(`insert into leases (family_id, property_id, tenant_id, entity_gstin_id, start_date, end_date, rent, due_day, grace_days, escalation_pct, escalation_every_months, deposit, gst_applicable, gst_rate, tds_applicable, tds_rate, notice_days, document_id, lease_kind)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) returning id`,
+        [fam, b.property_id, b.tenant_id, b.entity_gstin_id ?? null, b.start_date, b.end_date, b.rent, b.due_day, b.grace_days, b.escalation_pct, b.escalation_every_months ?? null, b.deposit, b.gst_applicable, gstRate, b.tds_applicable, b.tds_rate, b.notice_days, b.document_id ?? null, b.lease_kind])).rows[0];
+      // a pure lump-sum lease has no monthly rent, so there is no schedule to generate
+      const rows = b.rent > 0 ? generateRentSchedule({ startDate: b.start_date, endDate: b.end_date, rent: b.rent, dueDay: b.due_day, escalationPct: b.escalation_pct, escalationEveryMonths: b.escalation_every_months ?? null, gstApplicable: b.gst_applicable, gstRate, tdsApplicable: b.tds_applicable, tdsRate: b.tds_rate }) : [];
       for (const r of rows) await c.query("insert into rent_schedule (family_id, lease_id, period_month, expected_rent, expected_gst, expected_tds, due_date, status) values ($1,$2,$3,$4,$5,$6,$7, case when $7::date < current_date then 'overdue'::rent_status else 'due'::rent_status end)", [fam, l.id, r.periodMonth, r.expectedRent, r.expectedGst, r.expectedTds, r.dueDate]);
+      await syncLeaseRefunds(c, fam);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'create','leases',$3,$4)", [fam, req.user!.id, l.id, JSON.stringify({ ...b, schedule_rows: rows.length })]);
       return void reply.code(201).send({ ...leaseView((await c.query(`${LEASE_SQL} where l.id=$1`, [l.id])).rows[0]), schedule_rows: rows.length });
     });
@@ -146,8 +205,28 @@ export default async function routes(app: FastifyInstance) {
         for (const r of rows) { const ins = await c.query("insert into rent_schedule (family_id, lease_id, period_month, expected_rent, expected_gst, expected_tds, due_date, status) values ($1,$2,$3,$4,$5,$6,$7, case when $7::date < current_date then 'overdue'::rent_status else 'due'::rent_status end) on conflict (lease_id, period_month) do nothing", [fam, id, r.periodMonth, r.expectedRent, r.expectedGst, r.expectedTds, r.dueDate]); regenerated += ins.rowCount ?? 0; }
       }
       if (b.status && b.status !== "active") await c.query("delete from rent_schedule where lease_id=$1 and status in ('due','overdue') and period_month > date_trunc('month', current_date)", [id]);
+      await syncLeaseRefunds(c, fam);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'update','leases',$3,$4)", [fam, req.user!.id, id, JSON.stringify(b)]);
       return { ...leaseView((await c.query(`${LEASE_SQL} where l.id=$1`, [id])).rows[0]), regenerated };
+    });
+  });
+
+  /** Ending a lease closes it, drops the unpaid future rent rows and records the refund of the deposit / lump sum. */
+  app.post("/leases/:id/end", { preHandler: WRITERS }, async (req, reply) => {
+    const b = z.object({ refunded_amount: moneyIn.optional(), refunded_on: date.optional() }).parse(req.body ?? {});
+    return withFamily(req.family!.familyId, async (c) => {
+      const id = (req.params as any).id;
+      const l = (await c.query("select * from leases where id=$1", [id])).rows[0];
+      if (!l) return void reply.code(404).send({ title: "Not found", status: 404 });
+      if (l.status !== "active") return void reply.code(422).send({ title: "This lease has already ended", status: 422 });
+      const owed = Number(l.deposit);
+      const amount = b.refunded_amount ?? owed;
+      if (amount < 0 || amount > owed + 0.005) return void reply.code(422).send({ title: `The refund cannot be more than the ${owed} held`, status: 422 });
+      await c.query("update leases set status='ended', refunded_on=$2, refunded_amount=$3 where id=$1", [id, owed > 0 ? (b.refunded_on ?? today()) : null, owed > 0 ? amount : null]);
+      await c.query("delete from rent_schedule where lease_id=$1 and status in ('due','overdue') and period_month > date_trunc('month', current_date)", [id]);
+      await syncLeaseRefunds(c, req.family!.familyId);
+      await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'update','leases',$3,$4)", [req.family!.familyId, req.user!.id, id, JSON.stringify({ ended: true, ...b })]);
+      return leaseView((await c.query(`${LEASE_SQL} where l.id=$1`, [id])).rows[0]);
     });
   });
 

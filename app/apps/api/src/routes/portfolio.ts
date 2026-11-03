@@ -11,14 +11,14 @@ import { activeDepositValues } from "../lib/depositvalue.js";
 /** Holdings valued at latest price; PMS/AIF/private without a price row are valued at cost. */
 const HOLDINGS_SQL = `
   select h.id, h.entity_id, e.name as entity_name, h.bucket, h.quantity, h.avg_cost, h.core_satellite,
-         i.id as instrument_id, i.name as instrument, i.type, i.symbol, i.isin, i.asset_class,
-         p.close as price, p.price_date,
+         i.id as instrument_id, i.name as instrument, i.type, i.symbol, i.isin, i.asset_class, i.meta->>'maturity_date' as maturity_date, i.meta->>'commitment' as commitment, case when i.type = 'aif' then (select coalesce(sum(t.amount),0) from investment_txns t where t.family_id = h.family_id and t.entity_id = h.entity_id and t.instrument_id = h.instrument_id and t.account_id is not distinct from h.account_id and t.type = 'buy') end as called,
+         p.close as price, p.price_date, p.source as price_source,
          round(h.quantity * h.avg_cost, 2) as cost,
-         round(h.quantity * coalesce(p.close, h.avg_cost), 2) as value
+         round(h.quantity * coalesce(p.close, accrued_unit_price(h.id, h.avg_cost)), 2) as value
   from holdings h
   join entities e on e.id = h.entity_id
   join instruments i on i.id = h.instrument_id
-  left join lateral (select close, price_date from prices where instrument_id = i.id order by price_date desc limit 1) p on true
+  left join lateral (select close, price_date, source from prices where instrument_id = i.id order by price_date desc limit 1) p on true
   where 1=1`;
 
 const monthsSince = (d: Date | string) => { const b = new Date(d), n = new Date(); return (n.getFullYear() - b.getFullYear()) * 12 + (n.getMonth() - b.getMonth()) - (n.getDate() < b.getDate() ? 1 : 0); };
@@ -35,7 +35,7 @@ export default async function routes(app: FastifyInstance) {
       const { rows } = await c.query(sql + " order by value desc", params);
       // XIRR since inception on the open lots: each remaining lot is an outflow on its buy date, today's value the inflow
       const lots = (await c.query("select holding_id, buy_date, remaining_qty, unit_cost, charges, quantity from lots where remaining_qty > 0")).rows;
-      const xirrOf = (r: any) => { const ls = lots.filter((l) => l.holding_id === r.id); if (!ls.length || Number(r.value) <= 0) return null; try { const v = xirr([...ls.map((l) => ({ date: new Date(l.buy_date), amount: -(Number(l.remaining_qty) * Number(l.unit_cost) + Number(l.charges) * Number(l.remaining_qty) / Number(l.quantity)) })), { date: new Date(), amount: Number(r.value) }]); return Number.isFinite(v) ? +(v * 100).toFixed(2) : null; } catch { return null; } };
+      const xirrOf = (r: any) => { const ls = lots.filter((l) => l.holding_id === r.id); if (!ls.length || Number(r.value) <= 0) return null; if (Date.now() - Math.min(...ls.map((l) => new Date(l.buy_date).getTime())) < 30 * 864e5) return null; try { const v = xirr([...ls.map((l) => ({ date: new Date(l.buy_date), amount: -(Number(l.remaining_qty) * Number(l.unit_cost) + Number(l.charges) * Number(l.remaining_qty) / Number(l.quantity)) })), { date: new Date(), amount: Number(r.value) }]); return Number.isFinite(v) ? +(v * 100).toFixed(2) : null; } catch { return null; } };
       const items = rows.map((r) => ({ ...r, cost: money(r.cost), value: money(r.value), unrealised_gain: money(Number(r.value) - Number(r.cost)), unrealised_gain_pct: Number(r.cost) ? +(((Number(r.value) - Number(r.cost)) / Number(r.cost)) * 100).toFixed(2) : 0, xirr_pct: xirrOf(r) }));
       const totals = { cost: money(items.reduce((s, i) => s + Number(i.cost), 0)), value: money(items.reduce((s, i) => s + Number(i.value), 0)) };
       return { items, totals, next_cursor: null };

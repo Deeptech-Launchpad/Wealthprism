@@ -11,7 +11,7 @@ import { notifyTask } from "./notify.js";
 
 export class BalanceError extends Error { constructor(public status: number, m: string, public extra?: any) { super(m); } }
 export const today = () => new Date().toISOString().slice(0, 10);
-export const iso = (d: any) => (d == null ? null : typeof d === "string" ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
+export const iso = (d: any) => (d == null ? null : typeof d === "string" ? d.slice(0, 10) : d instanceof Date ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : new Date(d).toISOString().slice(0, 10));   // pg hands a DATE back as a local-midnight Date: read it with local parts, or a server east of UTC shows it a day early
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const money = (v: unknown) => (v == null ? "0.00" : Number(v).toFixed(2));
 const FREQ: Record<string, number | undefined> = { monthly: 12, quarterly: 4, half_yearly: 2, yearly: 1, single: 0 };
@@ -22,7 +22,7 @@ export interface AssetRow { type: string; id: string; name: string; entity_id: s
 /** Every asset the family holds, valued as of today, with the class it reports under. */
 export async function assetRows(c: pg.PoolClient, familyId: string, entityId?: string | null): Promise<AssetRow[]> {
   const out: AssetRow[] = [];
-  for (const h of (await c.query(`select h.id, h.entity_id, i.name, i.asset_class, i.type, round(h.quantity * coalesce(p.close, h.avg_cost), 2) value from holdings h join instruments i on i.id=h.instrument_id
+  for (const h of (await c.query(`select h.id, h.entity_id, i.name, i.asset_class, i.type, round(h.quantity * coalesce(p.close, accrued_unit_price(h.id, h.avg_cost)), 2) value from holdings h join instruments i on i.id=h.instrument_id
       left join lateral (select close from prices where instrument_id=i.id order by price_date desc limit 1) p on true where h.family_id=$1 and h.quantity > 0 and ($2::uuid is null or h.entity_id=$2)`, [familyId, entityId ?? null])).rows) out.push({ type: "holding", id: h.id, name: h.name, entity_id: h.entity_id, klass: ["pms", "aif"].includes(h.type) ? "alternatives" : h.asset_class === "equity" || h.type === "stock" ? "equity" : /debt|bond|liquid|arbitrage|gsec|tbill|fd/.test(String(h.asset_class) + h.type) ? "debt" : h.type === "gold" || h.type === "sgb" ? "gold" : "other_investments", value: Number(h.value) });
   for (const p of (await c.query(`select p.id, p.name, coalesce((select value from property_valuations v where v.property_id=p.id order by valued_on desc limit 1), p.acquisition_cost) value, o.entity_id, o.ownership_pct from properties p join property_owners o on o.property_id=p.id where p.family_id=$1 and p.deleted_at is null and ($2::uuid is null or o.entity_id=$2)`, [familyId, entityId ?? null])).rows) out.push({ type: "property", id: p.id, name: p.name, entity_id: p.entity_id, klass: "real_estate", value: r2(Number(p.value) * Number(p.ownership_pct) / 100) });
   for (const pi of (await c.query(`select pi.id, pi.entity_id, pi.instrument, co.name, pi.amount, pi.holding_pct, pi.business_profit, pi.business_multiple, (select value from private_marks m where m.private_investment_id=pi.id order by marked_on desc limit 1) mark from private_investments pi join private_companies co on co.id=pi.company_id where pi.family_id=$1 and pi.status <> 'written_off' and ($2::uuid is null or pi.entity_id=$2)`, [familyId, entityId ?? null])).rows) {
@@ -75,10 +75,20 @@ export async function regenerateSchedule(c: pg.PoolClient, l: any): Promise<Sche
 }
 export async function liabilitySchedule(c: pg.PoolClient, id: string) { return (await c.query("select id, due_date::text, principal, interest, (principal+interest) emi, paid_on::text, bank_txn_id, matched_at from liability_schedule where liability_id=$1 order by due_date", [id])).rows.map((r) => ({ ...r, principal: money(r.principal), interest: money(r.interest), emi: money(r.emi) })); }
 /** Outstanding from the schedule (paid principal) for amortising loans; interest-only lines keep what the lender reports. */
+/** A loan is over: the instalments still unpaid are cancelled and the money kept back for them is released; every payment already recorded stays as history. */
+export async function closeLoan(c: pg.PoolClient, id: string, closedOn: string, paidAmount: number | null) {
+  await c.query("delete from committed_outflows where source_type='liability_schedule' and status='pending' and source_id in (select id from liability_schedule where liability_id=$1 and paid_on is null)", [id]);
+  await c.query("delete from liability_schedule where liability_id=$1 and paid_on is null", [id]);
+  return (await c.query("update liabilities set status='closed', outstanding=0, outstanding_as_of=$2, closed_on=$2, closed_amount=$3, updated_at=now() where id=$1 returning *", [id, closedOn, paidAmount])).rows[0];
+}
 export async function refreshOutstanding(c: pg.PoolClient, id: string) {
   const l = (await c.query("select * from liabilities where id=$1", [id])).rows[0]; if (!l || l.interest_only) return l;
   const paid = Number((await c.query("select coalesce(sum(principal),0) v from liability_schedule where liability_id=$1 and paid_on is not null", [id])).rows[0].v);
-  return (await c.query("update liabilities set outstanding=greatest(0, principal_original - $2), outstanding_as_of=coalesce((select max(paid_on) from liability_schedule where liability_id=$1), outstanding_as_of), updated_at=now() where id=$1 returning *", [id, paid])).rows[0];
+  const u = (await c.query("update liabilities set outstanding=greatest(0, principal_original - $2), outstanding_as_of=coalesce((select max(paid_on) from liability_schedule where liability_id=$1), outstanding_as_of), updated_at=now() where id=$1 returning *", [id, paid])).rows[0];
+  // the last instalment has been paid: the loan is over
+  const s = (await c.query("select count(*)::int total, count(*) filter (where paid_on is null)::int unpaid, max(paid_on)::text last_paid from liability_schedule where liability_id=$1", [id])).rows[0];
+  if (u.status === "active" && s.total > 0 && s.unpaid === 0) return closeLoan(c, id, s.last_paid, null);
+  return u;
 }
 /** Match unpaid instalments to bank debits (same amount ±1%, ±5 days) on the loan's bank account. */
 export async function matchEmis(c: pg.PoolClient, familyId: string, day = today()) {
@@ -100,7 +110,7 @@ export async function refreshLtv(c: pg.PoolClient, familyId: string) {
   for (const l of loans) {
     let value: number | null = null;
     if (l.secured_by_type === "property") value = Number((await c.query("select coalesce((select value from property_valuations v where v.property_id=$1 order by valued_on desc limit 1), acquisition_cost) v from properties where id=$1", [l.secured_by_id])).rows[0]?.v ?? 0) || null;
-    else if (l.secured_by_type === "holding") value = Number((await c.query("select round(h.quantity * coalesce((select close from prices where instrument_id=h.instrument_id order by price_date desc limit 1), h.avg_cost), 2) v from holdings h where h.id=$1", [l.secured_by_id])).rows[0]?.v ?? 0) || null;
+    else if (l.secured_by_type === "holding") value = Number((await c.query("select round(h.quantity * coalesce((select close from prices where instrument_id=h.instrument_id order by price_date desc limit 1), accrued_unit_price(h.id, h.avg_cost)), 2) v from holdings h where h.id=$1", [l.secured_by_id])).rows[0]?.v ?? 0) || null;
     else if (l.secured_by_type === "lifestyle_asset") value = Number((await c.query("select current_value v from lifestyle_assets where id=$1", [l.secured_by_id])).rows[0]?.v ?? 0) || null;
     else if (l.secured_by_type === "private_investment") value = Number((await c.query("select coalesce((select value from private_marks m where m.private_investment_id=pi.id order by marked_on desc limit 1), pi.amount) v from private_investments pi where pi.id=$1", [l.secured_by_id])).rows[0]?.v ?? 0) || null;
     await c.query("update liabilities set security_value=$2, ltv_pct=$3, updated_at=now() where id=$1", [l.id, value, ltvOf(Number(l.outstanding), value)]); n++;
@@ -180,7 +190,7 @@ export async function nominationView(n: any) { return { ...n, share_pct: Number(
 export async function successionGaps(c: pg.PoolClient, familyId: string, day = today()) {
   const ents = (await c.query("select id, name, type from entities where family_id=$1 and deleted_at is null", [familyId])).rows; const individuals = ents.filter((e) => e.type === "individual").map((e) => e.id);
   const assets: { asset_type: string; asset_id: string; name: string; entity_id: string; value: number }[] = [];
-  for (const h of (await c.query("select h.id, h.entity_id, i.name, round(h.quantity * coalesce((select close from prices where instrument_id=i.id order by price_date desc limit 1), h.avg_cost), 2) value from holdings h join instruments i on i.id=h.instrument_id where h.family_id=$1 and h.quantity > 0 and h.entity_id = any($2)", [familyId, individuals])).rows) assets.push({ asset_type: "holding", asset_id: h.id, name: h.name, entity_id: h.entity_id, value: Number(h.value) });
+  for (const h of (await c.query("select h.id, h.entity_id, i.name, round(h.quantity * coalesce((select close from prices where instrument_id=i.id order by price_date desc limit 1), accrued_unit_price(h.id, h.avg_cost)), 2) value from holdings h join instruments i on i.id=h.instrument_id where h.family_id=$1 and h.quantity > 0 and h.entity_id = any($2)", [familyId, individuals])).rows) assets.push({ asset_type: "holding", asset_id: h.id, name: h.name, entity_id: h.entity_id, value: Number(h.value) });
   for (const a of (await c.query("select id, entity_id, provider||' '||kind||' '||identifier_masked name from accounts where family_id=$1 and deleted_at is null and entity_id = any($2)", [familyId, individuals])).rows) assets.push({ asset_type: "account", asset_id: a.id, name: a.name, entity_id: a.entity_id, value: 0 });
   for (const b of (await c.query("select id, entity_id, bank||' '||account_masked name, balance from bank_accounts where family_id=$1 and deleted_at is null and type <> 'card' and entity_id = any($2)", [familyId, individuals])).rows) assets.push({ asset_type: "bank_account", asset_id: b.id, name: b.name, entity_id: b.entity_id, value: Number(b.balance) });
   for (const p of (await c.query("select p.id, p.name, o.entity_id, coalesce((select value from property_valuations v where v.property_id=p.id order by valued_on desc limit 1), p.acquisition_cost) value from properties p join property_owners o on o.property_id=p.id where p.family_id=$1 and p.deleted_at is null and o.entity_id = any($2)", [familyId, individuals])).rows) assets.push({ asset_type: "property", asset_id: p.id, name: p.name, entity_id: p.entity_id, value: Number(p.value) });

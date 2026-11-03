@@ -51,7 +51,8 @@ async function checkType(c: any, code: string, kind: string, startDate: string, 
 }
 
 async function writeSchedule(c: any, fam: string, depositId: string, terms: Parameters<typeof generateDepositSchedule>[0]) {
-  const schedule = generateDepositSchedule(terms);
+  const compounding = (await c.query("select t.compounding from deposits d join deposit_types t on t.code=d.type_code where d.id=$1", [depositId])).rows[0]?.compounding;
+  const schedule = generateDepositSchedule({ ...terms, compounding });
   for (const s of schedule) await c.query("insert into deposit_receipts (family_id, deposit_id, kind, due_date, expected_amount, status) values ($1,$2,$3,$4,$5, case when $4::date < current_date then 'overdue'::text else 'expected'::text end)", [fam, depositId, s.kind, s.dueDate, s.expectedAmount]);
   return schedule.length;
 }
@@ -104,7 +105,7 @@ export default async function routes(app: FastifyInstance) {
   /** The proofs already uploaded against a deposit for a bank-exception closure (uploaded through POST /documents with linked_type=deposit and doc_type=exception:<doc_code>). */
   app.get("/deposits/:id/exception-documents", async (req) => withFamily(req.family!.familyId, async (c) => (await c.query("select d.id, d.name, substr(d.doc_type, 11) as doc_code, d.created_at from documents d where d.family_id=$1 and d.linked_type='deposit' and d.linked_id=$2 and d.deleted_at is null and d.doc_type like 'exception:%' order by d.created_at", [req.family!.familyId, (req.params as any).id])).rows));
   /** The reference list behind the Type dropdown (same for every family). */
-  app.get("/deposit-types", async (req) => withFamily(req.family!.familyId, async (c) => (await c.query("select code, kind, label, description, break_rule, lock_in_months, default_penalty_pct::float as default_penalty_pct, default_payout, default_tds, min_tenure_months, max_tenure_months, partial_withdrawal from deposit_types order by kind, sort")).rows));
+  app.get("/deposit-types", async (req) => withFamily(req.family!.familyId, async (c) => (await c.query("select code, kind, label, description, break_rule, lock_in_months, default_penalty_pct::float as default_penalty_pct, default_payout, default_tds, min_tenure_months, max_tenure_months, partial_withdrawal, compounding, default_rate_pct::float as default_rate_pct, rate_note, govt_scheme from deposit_types order by kind, sort")).rows));
   app.get("/deposits", async (req) => withFamily(req.family!.familyId, async (c) => {
     const rows = (await c.query(`${DEPOSIT_SQL} where d.family_id=$1 and (d.status='active' or ($2::boolean and d.status in ('premature_closed','closed'))) order by d.status, d.maturity_date`, [req.family!.familyId, (req.query as any)?.status === "all"])).rows;
     const out = []; for (const r of rows) out.push(await depositView(c, r)); return out;

@@ -12,8 +12,8 @@ export const today = () => new Date().toISOString().slice(0, 10);
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const addMonths = (iso: string, n: number) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 10); };
 const BUCKETS = ["liquidity", "income", "growth"] as const; type Bucket = (typeof BUCKETS)[number];
-const HOLD_SQL = `select h.id, h.entity_id, e.name entity_name, h.bucket, h.quantity, h.avg_cost, h.core_satellite, i.id instrument_id, i.name instrument, i.type, i.asset_class, coalesce(p.close, h.avg_cost) price,
-    round(h.quantity * h.avg_cost, 2) cost, round(h.quantity * coalesce(p.close, h.avg_cost), 2) value, (select min(buy_date) from lots l where l.holding_id=h.id) first_buy
+const HOLD_SQL = `select h.id, h.entity_id, e.name entity_name, h.bucket, h.quantity, h.avg_cost, h.core_satellite, i.id instrument_id, i.name instrument, i.type, i.asset_class, coalesce(p.close, accrued_unit_price(h.id, h.avg_cost)) price,
+    round(h.quantity * h.avg_cost, 2) cost, round(h.quantity * coalesce(p.close, accrued_unit_price(h.id, h.avg_cost)), 2) value, (select min(buy_date) from lots l where l.holding_id=h.id) first_buy
   from holdings h join entities e on e.id=h.entity_id join instruments i on i.id=h.instrument_id left join lateral (select close from prices where instrument_id=i.id order by price_date desc limit 1) p on true
   where h.family_id=$1 and h.quantity > 0 and ($2::uuid is null or h.entity_id=$2)`;
 
@@ -23,7 +23,7 @@ const inflated = (g: any) => Number(g.amount_today) * Math.pow(1 + Number(g.infl
 /** Linked value: holdings (× allocation %), private stakes at their mark and properties at their latest valuation. */
 export async function goalLinkedValue(c: pg.PoolClient, familyId: string, goalId: string) {
   const rows = (await c.query(`select l.allocation_pct, l.holding_id, l.private_investment_id, l.property_id, l.deposit_id,
-      (select round(h.quantity * coalesce((select close from prices p where p.instrument_id=h.instrument_id order by price_date desc limit 1), h.avg_cost), 2) from holdings h where h.id=l.holding_id) hv,
+      (select round(h.quantity * coalesce((select close from prices p where p.instrument_id=h.instrument_id order by price_date desc limit 1), accrued_unit_price(h.id, h.avg_cost)), 2) from holdings h where h.id=l.holding_id) hv,
       (select coalesce((select value from private_marks m where m.private_investment_id=pi.id order by marked_on desc limit 1), pi.amount) from private_investments pi where pi.id=l.private_investment_id) pv,
       (select coalesce((select value from property_valuations v where v.property_id=p.id order by valued_on desc limit 1), p.acquisition_cost) from properties p where p.id=l.property_id) rv
     from goal_links l where l.goal_id=$1`, [goalId])).rows;

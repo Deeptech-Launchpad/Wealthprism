@@ -8,6 +8,7 @@ export interface DepositTerms {
   installmentAmount?: number;   // rd only
   tenureMonths?: number;        // rd only
   payoutFrequency: "monthly" | "quarterly" | "at_maturity";
+  compounding?: "quarterly" | "yearly";   // how a cumulative deposit adds its interest: banks quarterly, NSC and KVP once a year
 }
 export interface DepositReceiptRow { kind: "interest" | "contribution" | "maturity"; dueDate: string; expectedAmount: number }
 
@@ -48,8 +49,9 @@ export function generateDepositSchedule(t: DepositTerms): DepositReceiptRow[] {
   if (t.kind === "fd") {
     const principal = t.principal ?? 0;
     if (t.payoutFrequency === "at_maturity") {
-      const quarters = Math.round(monthsBetween(t.startDate, t.maturityDate) / 3);
-      rows.push({ kind: "maturity", dueDate: t.maturityDate, expectedAmount: r2(principal * Math.pow(1 + t.ratePct / 400, quarters)) });
+      const months = monthsBetween(t.startDate, t.maturityDate);
+      const amount = t.compounding === "yearly" ? principal * Math.pow(1 + t.ratePct / 100, months / 12) : principal * Math.pow(1 + t.ratePct / 400, Math.round(months / 3));
+      rows.push({ kind: "maturity", dueDate: t.maturityDate, expectedAmount: r2(amount) });
     } else {
       const step = t.payoutFrequency === "monthly" ? 1 : 3;
       const interestPerPeriod = r2(principal * (t.ratePct / 100) * (step / 12));

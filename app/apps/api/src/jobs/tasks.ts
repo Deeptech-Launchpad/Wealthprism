@@ -1,6 +1,7 @@
 /** Task engine (FO-55): pluggable generators run hourly per family. Every generator is de-duplicated on
  *  (source_type, source_id) while a task is open, closes its own task when the source is resolved, and new tasks
  *  are fanned out to the family's notification channels. */
+import { syncHoldingReceipts } from "../lib/holdingreceipts.js";
 import type pg from "pg";
 import { allocationBandDrafts, allocationReviewDrafts } from "../lib/allocation.js";
 import { pool } from "../lib/db.js";
@@ -19,7 +20,7 @@ export const generators: Generator[] = [
     const promoted = (await c.query(`update rent_schedule rs set status='overdue' from leases l where l.id=rs.lease_id and rs.status='due' and rs.due_date + l.grace_days < $1::date returning rs.id, rs.due_date, rs.expected_rent, l.property_id`, [today])).rows;
     for (const r of promoted) await emitEvent(c, fam, "rent.overdue", { rent_schedule_id: r.id, due_date: r.due_date, expected_rent: r.expected_rent, property_id: r.property_id }).catch(() => null);
     const rows = (await c.query(`select rs.id, rs.due_date, rs.expected_rent, rs.received_amount, p.name property, t.name tenant, (select entity_id from property_owners o where o.property_id=p.id order by ownership_pct desc limit 1) entity_id, ($1::date - rs.due_date) days
-        from rent_schedule rs join leases l on l.id=rs.lease_id join properties p on p.id=l.property_id join tenants t on t.id=l.tenant_id where rs.status in ('overdue','partial') and rs.due_date < $1::date`, [today])).rows;
+        from rent_schedule rs join leases l on l.id=rs.lease_id join properties p on p.id=l.property_id and p.deleted_at is null join tenants t on t.id=l.tenant_id where rs.status in ('overdue','partial') and rs.due_date < $1::date`, [today])).rows;
     return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "real_estate", title: `Rent overdue ${r.days} d: ${r.property} — remind ${r.tenant}`, reason: `Due ${fmt(r.due_date)}, ${Number(r.received_amount) ? "part-paid" : "not received"}`, amount: Number(r.expected_rent) - Number(r.received_amount), due_date: iso(r.due_date), severity: 1 as const, source_type: "rent_schedule", source_id: r.id, verification: "pending" as const })),
       resolved: (await c.query("select id from rent_schedule where status in ('received','waived')")).rows.map((r) => ({ source_type: "rent_schedule", source_id: r.id })) };
   } },
@@ -49,6 +50,43 @@ export const generators: Generator[] = [
     return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "investments", title: `Maturing ${r.days === 0 ? "today" : `in ${r.days} d`}: ${r.bank}${r.account_no ? ` · ${r.account_no}` : ""}`, reason: `₹${Number(r.expected_amount).toLocaleString("en-IN")} is due back on ${fmt(r.due_date)} into ${r.acct}. Decide: renew, withdraw or reinvest — then click Receive when the bank credits it.`, amount: Number(r.expected_amount), due_date: iso(r.due_date), severity: 2 as const, source_type: "deposit_receipt", source_id: r.id, verification: "pending" as const })),
       resolved: (await c.query("select id from deposit_receipts where status='received'")).rows.map((r) => ({ source_type: "deposit_receipt", source_id: r.id })) };
   } },
+  { name: "holding_receipt_due", run: async (c, fam, today) => {
+    // bonds, G-Secs, SGBs and T-bills: keep the expected payments in step with the holdings, then raise what is late and what is about to mature
+    await syncHoldingReceipts(c, fam);
+    const rows = (await c.query(`select r.id, r.kind, r.due_date::text due_date, r.expected_amount, r.received_amount, r.status, i.name, r.entity_id, ($1::date - r.due_date) late
+        from holding_receipts r join instruments i on i.id=r.instrument_id where r.status in ('expected','overdue','partial') and (r.due_date < $1::date or (r.kind='maturity' and r.due_date <= $1::date + 30))`, [today])).rows;
+    const money = (n: any) => "₹" + Number(n).toLocaleString("en-IN");
+    return { drafts: rows.map((r) => r.late > 0
+        ? { entity_id: r.entity_id, module: "investments", title: `${r.kind === "maturity" ? "Maturity" : "Interest"} overdue ${r.late} d: ${r.name}`, reason: `Due ${fmt(r.due_date)}, ${Number(r.received_amount) ? "part-received" : "not received"}. Check the bank statement or click Record on Investments → Holdings.`, amount: Number(r.expected_amount) - Number(r.received_amount), due_date: r.due_date, severity: 1 as const, source_type: "holding_receipt", source_id: r.id, verification: "pending" as const }
+        : { entity_id: r.entity_id, module: "investments", title: `Matures ${r.late === 0 ? "today" : `in ${-r.late} d`}: ${r.name}`, reason: `${money(r.expected_amount)} is due back on ${fmt(r.due_date)}. Decide: hold, roll over or reinvest — then record it when the bank credits it.`, amount: Number(r.expected_amount), due_date: r.due_date, severity: 2 as const, source_type: "holding_receipt", source_id: r.id, verification: "pending" as const }),
+      resolved: (await c.query("select id from holding_receipts where status in ('received','cancelled')")).rows.map((r) => ({ source_type: "holding_receipt", source_id: r.id })) };
+  } },
+  { name: "capital_call_due", run: async (c, fam, today) => {
+    // an AIF call the manager has announced: remind 10 days ahead, and urgently once it is late
+    const rows = (await c.query(`select k.id, k.amount, k.due_date::text due_date, i.name, h.entity_id, ($1::date - k.due_date) late
+        from capital_calls k join holdings h on h.id=k.holding_id join instruments i on i.id=h.instrument_id where k.status='expected' and k.due_date <= $1::date + 10`, [today])).rows;
+    const money = (n: any) => "₹" + Number(n).toLocaleString("en-IN");
+    return { drafts: rows.map((r) => r.late > 0
+        ? { entity_id: r.entity_id, module: "investments", title: `Capital call overdue ${r.late} d: ${r.name}`, reason: `${money(r.amount)} was due on ${fmt(r.due_date)}. Pay it, then record it under Add transaction → Capital call.`, amount: Number(r.amount), due_date: r.due_date, severity: 1 as const, source_type: "capital_call", source_id: r.id, verification: "pending" as const }
+        : { entity_id: r.entity_id, module: "investments", title: `Capital call ${r.late === 0 ? "due today" : `in ${-r.late} d`}: ${r.name}`, reason: `${money(r.amount)} is due on ${fmt(r.due_date)}. Keep the money ready in the bank, then record it under Add transaction → Capital call.`, amount: Number(r.amount), due_date: r.due_date, severity: 2 as const, source_type: "capital_call", source_id: r.id, verification: "pending" as const }),
+      resolved: (await c.query("select id from capital_calls where status in ('paid','cancelled')")).rows.map((r) => ({ source_type: "capital_call", source_id: r.id })) };
+  } },
+  { name: "savings_year_end", run: async (c, fam, today) => {
+    // PPF / SSY: from 1 February, say how much of the year's limit is still unused (a deposit up to 31 March counts for this year); and warn as an account nears maturity
+    const [y, m] = today.split("-").map(Number); const fy = m >= 4 ? y : y - 1;
+    const rows = (await c.query(`select a.id, a.scheme, a.institution, a.account_no, a.entity_id, a.matures_on::text matures_on, a.deposits_until::text deposits_until, (a.matures_on - $1::date) days,
+        coalesce((select sum(amount) from savings_entries e where e.account_id=a.id and e.kind='deposit' and e.entry_date between make_date($2,4,1) and make_date($2+1,3,31)),0)
+          + case when a.tracked_from >= make_date($2,4,1) and a.opened_on >= make_date($2,4,1) then a.opening_balance else 0 end used
+        from savings_accounts a where a.status='active' and a.scheme <> 'epf'`, [today, fy])).rows;
+    const money = (n: any) => "₹" + Number(n).toLocaleString("en-IN"); const label = (r: any) => `${String(r.scheme).toUpperCase()}${r.account_no ? " " + r.account_no : ""} · ${r.institution}`;
+    const drafts: any[] = [];
+    for (const r of rows) {
+      const open = !r.deposits_until || r.deposits_until >= today;
+      if (m >= 2 && m <= 3 && open && Number(r.used) < 150000 && r.days > 0) drafts.push({ entity_id: r.entity_id, module: "investments", title: `${money(150000 - Number(r.used))} of this year's limit is unused: ${label(r)}`, reason: `${money(r.used)} has gone in this financial year, out of ${money(150000)}. A deposit made by 31 March still counts for this year. (Skip this if you do not want to use the full limit.)`, amount: 150000 - Number(r.used), due_date: `${fy + 1}-03-31`, severity: 3 as const, source_type: "savings_account", source_id: r.id, verification: "pending" as const });
+      if (r.days >= 0 && r.days <= 90) drafts.push({ entity_id: r.entity_id, module: "investments", title: `Matures in ${r.days} d: ${label(r)}`, reason: `The account matures on ${fmt(r.matures_on)}. Decide whether to withdraw, extend (PPF can be extended in blocks of 5 years) or reinvest.`, amount: null, due_date: r.matures_on, severity: 2 as const, source_type: "savings_account", source_id: r.id, verification: "pending" as const });
+    }
+    return { drafts, resolved: [] };
+  } },
   { name: "deposit_foreclosure", run: async (c, fam, today) => {
     // a closed-early deposit's money must show up: remind after 3 days with no credit seen, and whenever a credit was found but differs from what was recorded
     const rows = (await c.query(`select r.id, r.due_date, r.expected_amount, r.received_amount, r.status, d.bank, d.account_no, d.entity_id, ($1::date - r.due_date) days
@@ -61,13 +99,13 @@ export const generators: Generator[] = [
   } },
   { name: "lease_expiry", run: async (c, fam, today) => {
     const rows = (await c.query(`select l.id, l.end_date, l.notice_days, l.escalation_pct, p.name property, t.name tenant, (select entity_id from property_owners o where o.property_id=p.id order by ownership_pct desc limit 1) entity_id
-        from leases l join properties p on p.id=l.property_id join tenants t on t.id=l.tenant_id where l.status='active' and l.end_date <= $1::date + l.notice_days and l.end_date >= $1::date`, [today])).rows;
+        from leases l join properties p on p.id=l.property_id and p.deleted_at is null join tenants t on t.id=l.tenant_id where l.status='active' and l.end_date <= $1::date + l.notice_days and l.end_date >= $1::date`, [today])).rows;
     return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "real_estate", title: `Renew or vacate: ${r.property} lease ends ${fmt(r.end_date)}`, reason: `${r.tenant} · ${r.notice_days}-day notice window${Number(r.escalation_pct) ? ` · ${Number(r.escalation_pct)}% escalation clause` : ""}`, due_date: iso(new Date(new Date(r.end_date).getTime() - r.notice_days * 86400000)), severity: 1 as const, source_type: "lease_expiry", source_id: r.id })),
       resolved: (await c.query("select id from leases where status <> 'active' or end_date > $1::date + notice_days", [today])).rows.map((r) => ({ source_type: "lease_expiry", source_id: r.id })) };
   } },
   { name: "property_tax_due", run: async (c, fam, today) => {
     const rows = (await c.query(`select x.id, x.due_date, x.amount, x.authority, x.period, p.name property, (select entity_id from property_owners o where o.property_id=p.id order by ownership_pct desc limit 1) entity_id
-        from property_taxes x join properties p on p.id=x.property_id where x.status='due' and x.due_date <= $1::date + 30`, [today])).rows;
+        from property_taxes x join properties p on p.id=x.property_id and p.deleted_at is null where x.status='due' and x.due_date <= $1::date + 30`, [today])).rows;
     return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "real_estate", title: `Property tax ${iso(r.due_date)! < today ? "overdue" : "due"}: ${r.property}`, reason: `${r.authority} · ${r.period} · due ${fmt(r.due_date)}`, amount: Number(r.amount), due_date: iso(r.due_date), severity: (iso(r.due_date)! < today ? 1 : 2) as 1 | 2, source_type: "property_tax", source_id: r.id, verification: "pending" as const })),
       resolved: (await c.query("select id from property_taxes where status='paid'")).rows.map((r) => ({ source_type: "property_tax", source_id: r.id })) };
   } },
@@ -92,6 +130,13 @@ export const generators: Generator[] = [
     const rows = (await c.query(`select p.id, p.entity_id, p.insurer, p.kind, p.premium, p.next_premium_due, e.name entity from insurance_policies p join entities e on e.id=p.entity_id where p.family_id=$1 and p.status='active' and p.deleted_at is null and p.next_premium_due <= $2::date + 30`, [fam, today])).rows;
     return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "insurance", title: `Premium due ${fmt(r.next_premium_due)} — ${r.insurer} ${String(r.kind).replace(/_/g, " ")}`, reason: `${r.entity} · pay before the grace period ends to keep the cover in force`, amount: Number(r.premium), due_date: iso(r.next_premium_due), severity: (new Date(r.next_premium_due) < new Date(today) ? 1 : 2) as 1 | 2, source_type: "insurance_policy", source_id: r.id })),
       resolved: (await c.query("select id from insurance_policies where status <> 'active' or deleted_at is not null or next_premium_due is null or next_premium_due > $1::date + 30", [today])).rows.map((r) => ({ source_type: "insurance_policy", source_id: r.id })) };
+  } },
+  { name: "insurance_lapse", run: async (c, fam, today) => {
+    // a premium more than 30 days late: the policy may have lapsed, so its cash value (the surrender or fund value you typed) may no longer be true
+    const rows = (await c.query(`select p.id, p.entity_id, p.insurer, p.kind, p.next_premium_due, ($2::date - p.next_premium_due) late, e.name entity, (p.surrender_value is not null or p.fund_value is not null) has_value
+        from insurance_policies p join entities e on e.id=p.entity_id where p.family_id=$1 and p.status='active' and p.deleted_at is null and p.premium_frequency <> 'single' and p.next_premium_due < $2::date - 30`, [fam, today])).rows;
+    return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "insurance", title: `May have lapsed (premium ${r.late} d late): ${r.insurer} ${String(r.kind).replace(/_/g, " ")}`, reason: `${r.entity} · the premium due ${fmt(r.next_premium_due)} is not recorded as paid. The grace period is usually 30 days, after which a policy lapses. Ask the insurer.${r.has_value ? " If it lapsed, the value you typed (surrender or fund value) may be too high: edit it, since it counts in your net worth." : ""} If you did pay it, click Premium paid.`, amount: null, due_date: iso(r.next_premium_due), severity: 1 as const, source_type: "insurance_lapse", source_id: r.id })),
+      resolved: (await c.query("select id from insurance_policies where status <> 'active' or deleted_at is not null or next_premium_due is null or next_premium_due >= $1::date - 30", [today])).rows.map((r) => ({ source_type: "insurance_lapse", source_id: r.id })) };
   } },
   { name: "ltv_breach", run: async (c, fam) => {
     const rows = (await c.query(`select l.id, l.entity_id, l.lender, l.kind, l.ltv_pct, l.ltv_alert_pct, l.outstanding, l.security_value from liabilities l where l.family_id=$1 and l.status='active' and l.deleted_at is null and l.ltv_pct is not null and l.ltv_alert_pct is not null and l.ltv_pct > l.ltv_alert_pct`, [fam])).rows;
@@ -132,7 +177,7 @@ export const generators: Generator[] = [
     // 26AS rows imported for the FY vs TDS expected on rent: a deductor missing or short by more than ₹1 is a mismatch
     const fy = fyOf(today);
     const expected = (await c.query(`select t.id tenant_id, t.name, sum(rs.expected_tds) exp, (select entity_id from property_owners o where o.property_id=p.id order by ownership_pct desc limit 1) entity_id
-        from rent_schedule rs join leases l on l.id=rs.lease_id join tenants t on t.id=l.tenant_id join properties p on p.id=l.property_id
+        from rent_schedule rs join leases l on l.id=rs.lease_id join tenants t on t.id=l.tenant_id join properties p on p.id=l.property_id and p.deleted_at is null
         where rs.expected_tds > 0 and rs.status='received' and rs.period_month >= $1::date and rs.period_month < $1::date + interval '1 year' group by t.id, t.name, p.id`, [`${fy.slice(0, 4)}-04-01`])).rows;
     const has26 = (await c.query("select count(*) n from tds_26as where fy=$1", [fy])).rows[0].n;
     if (!Number(has26)) return { drafts: [], resolved: [] };

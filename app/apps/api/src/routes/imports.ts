@@ -1,3 +1,5 @@
+import { reconcileHoldingReceipts } from "../lib/holdingreceipts.js";
+import { reconcileSavingsDeposits } from "../lib/savings.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -58,7 +60,7 @@ export async function applyInvestmentTxn(c: any, familyId: string, entityId: str
   const kind = t.type === "sip" ? "sip" : t.type;
   const txnId = (await c.query("insert into investment_txns (family_id, entity_id, account_id, instrument_id, type, txn_date, quantity, price, amount, charges, source, source_ref, hash) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id",
     [familyId, entityId, accountId, instrumentId, kind, t.date, t.quantity, t.price, t.amount, t.charges, t.source, jobId, t.ref])).rows[0].id;
-  const ins = await c.query("select default_bucket from instruments where id=$1", [instrumentId]);
+  const ins = await c.query("select default_bucket, asset_class from instruments where id=$1", [instrumentId]);
   const h = await c.query(`insert into holdings (family_id, entity_id, account_id, instrument_id, quantity, avg_cost, bucket) values ($1,$2,$3,$4,0,0,$5)
      on conflict (entity_id, account_id, instrument_id) do update set updated_at = now() returning id, quantity, avg_cost`, [familyId, entityId, accountId, instrumentId, ins.rows[0].default_bucket]);
   const holdingId = h.rows[0].id;
@@ -68,8 +70,8 @@ export async function applyInvestmentTxn(c: any, familyId: string, entityId: str
     if (manual.rows[0]) await c.query("update lots set source_txn_id=$2 where id=$1", [manual.rows[0].id, txnId]);
     else await c.query("insert into lots (family_id, holding_id, buy_date, quantity, remaining_qty, unit_cost, charges, source_txn_id) values ($1,$2,$3,$4,$4,$5,$6,$7)", [familyId, holdingId, t.date, t.quantity, t.price, t.charges, txnId]);
   } else if (["sell", "redemption", "switch_out"].includes(kind)) {
-    const lots = (await c.query("select id, buy_date, quantity, remaining_qty, unit_cost, charges, grandfathered_fmv from lots where holding_id=$1 and remaining_qty > 0 order by buy_date", [holdingId])).rows
-      .map((l: any) => ({ id: l.id, buyDate: new Date(l.buy_date).toISOString().slice(0, 10), quantity: Number(l.quantity), remainingQty: Number(l.remaining_qty), unitCost: Number(l.unit_cost), charges: Number(l.charges), fmv: l.grandfathered_fmv == null ? null : Number(l.grandfathered_fmv) }));
+    const lots = (await c.query("select id, buy_date::text bd, quantity, remaining_qty, unit_cost, charges, grandfathered_fmv from lots where holding_id=$1 and remaining_qty > 0 order by buy_date", [holdingId])).rows
+      .map((l: any) => ({ id: l.id, buyDate: l.bd, quantity: Number(l.quantity), remainingQty: Number(l.remaining_qty), unitCost: Number(l.unit_cost), charges: Number(l.charges), fmv: l.grandfathered_fmv == null ? null : Number(l.grandfathered_fmv) }));
     // Section 112A grandfathering: equity bought before 1 Feb 2018 takes the higher of actual cost and the lower of (31 Jan 2018 FMV, sale price); the FMV comes from the lot or the instrument (loaded per ISIN)
     const instFmv = Number((await c.query("select (meta->>'fmv_31jan2018')::numeric v from instruments where id=$1", [instrumentId])).rows[0]?.v ?? 0) || null;
     const isEquity = t.instrument.type === "stock" || t.instrument.type === "etf" || (t.instrument.type === "mf" && String(ins.rows[0].asset_class ?? "equity") === "equity");
@@ -84,7 +86,7 @@ export async function applyInvestmentTxn(c: any, familyId: string, entityId: str
       const lot = lots.find((l: any) => l.id === cn.lotId); const fmv = lot?.fmv ?? instFmv; let cost = cn.cost; let grandfathered = false;
       if (isEquity && fmv && cn.buyDate < "2018-02-01") { const stepped = +Math.min(fmv * cn.qty, proceeds).toFixed(2); if (stepped > cost) { cost = stepped; grandfathered = true; } }
       await c.query("insert into realized_gains (family_id, entity_id, instrument_id, lot_id, sell_txn_id, fy, buy_date, sell_date, quantity, cost, proceeds, gain, term, asset_class, grandfathered, fmv_31jan2018) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
-        [familyId, entityId, instrumentId, cn.lotId, txnId, fy, cn.buyDate, t.date, cn.qty, cost, proceeds, +(proceeds - cost).toFixed(2), long ? "long" : "short", t.instrument.type === "bond" ? "listed_bond" : "equity", grandfathered, grandfathered ? fmv : null]);
+        [familyId, entityId, instrumentId, cn.lotId, txnId, fy, cn.buyDate, t.date, cn.qty, cost, proceeds, +(proceeds - cost).toFixed(2), long ? "long" : "short", ({ bond: "listed_bond", gsec: "listed_bond", tbill: "listed_bond", sgb: "sgb" } as Record<string, string>)[t.instrument.type] ?? "equity", grandfathered, grandfathered ? fmv : null]);
     }
   }
   // recompute holding quantity and average cost from lots
@@ -232,6 +234,8 @@ export async function runImport(c: any, fam: string, userId: string | null, inpu
       else { const last = (result.rows as ParsedBankTxn[]).filter((x) => x.balanceAfter != null).sort((a, b) => a.date.localeCompare(b.date)).pop(); if (last) await c.query("update bank_accounts set balance=$2, balance_as_of=$3 where id=$1", [acct, last.balanceAfter, last.date]); }
       const matched = await reconcileRent(c, fam); log.push({ rent_matched: matched });
       log.push({ deposits_matched: await reconcileDeposits(c, fam) });
+      log.push({ bond_payments_matched: await reconcileHoldingReceipts(c, fam) });
+      log.push({ savings_deposits: await reconcileSavingsDeposits(c, fam) });
       await c.query("update import_jobs set source='bank_csv' where id=$1", [jobId]);
     } else if (kind === "pms" || kind === "aif" || kind === "ecas") {
       const st = result.rows[0]; if (!st) throw new Error(`${kind === "ecas" ? "e-CAS" : kind.toUpperCase()} statement could not be read`);

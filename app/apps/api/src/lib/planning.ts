@@ -38,7 +38,7 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
   const fy = fyOf(asOf);
   const ents = (await c.query("select id, name, type, tax_regime from entities where deleted_at is null and ($1::uuid[] is null or id = any($1)) order by created_at, id", [entityScope ?? null])).rows;
   const ids = ents.map((e) => e.id);
-  const holdings = (await c.query(`select h.id, h.entity_id, h.instrument_id, h.bucket, h.quantity, i.name, i.asset_class, i.type, coalesce((select close from prices p where p.instrument_id=i.id order by price_date desc limit 1), h.avg_cost) price,
+  const holdings = (await c.query(`select h.id, h.entity_id, h.instrument_id, h.bucket, h.quantity, i.name, i.asset_class, i.type, coalesce((select close from prices p where p.instrument_id=i.id order by price_date desc limit 1), accrued_unit_price(h.id, h.avg_cost)) price,
       coalesce((select json_agg(json_build_object('id', l.id, 'buyDate', l.buy_date, 'quantity', l.quantity, 'remainingQty', l.remaining_qty, 'unitCost', l.unit_cost, 'charges', l.charges, 'fmv', l.grandfathered_fmv) order by l.buy_date) from lots l where l.holding_id=h.id and l.remaining_qty > 0), '[]') lots
       from holdings h join instruments i on i.id=h.instrument_id where h.entity_id = any($1) and h.quantity > 0`, [ids])).rows;
   const props = (await c.query(`select p.id, p.name, p.self_occupied, p.acquisition_date, p.acquisition_cost + p.stamp_duty + p.registration + coalesce((select sum(amount) from property_expenses x where x.property_id=p.id and x.capital_improvement),0) cost,

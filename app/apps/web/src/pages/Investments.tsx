@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Upload } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Upload, RefreshCw } from "lucide-react";
 import { useApi } from "../lib/useApi";
 import { inr } from "../lib/api";
 import { Card, Pill, Status, fmtDate } from "../components";
@@ -7,17 +7,29 @@ import { api, apiUpload, session, API_URL } from "../lib/api";
 import { ImportPanel, ImportJobs, ImportSources, CasRefresh } from "./Imports";
 import { Performance } from "./Performance";
 import { Harvest, Global, FmvLoader } from "./Global";
+import { AddAsset, canAddAsset } from "./AddAsset";
+import { BondPayments } from "./BondPayments";
+import { AddTransaction } from "./AddTransaction";
+import { EditHolding } from "./EditHolding";
+import { SavingsAccounts } from "./SavingsAccounts";
 
-const TABS = ["Holdings", "Deposits", "Performance", "Capital gains", "Harvest", "Corporate actions", "Global", "Imports"] as const;
+const TABS = ["Holdings", "Deposits", "Savings accounts", "Performance", "Capital gains", "Harvest", "Corporate actions", "Global", "Imports"] as const;
 const FYS = ["2026-27", "2025-26", "2024-25"];
 
 export function Investments() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Holdings");
-  const [tick, setTick] = useState(0);
+  const [tick, setTick] = useState(0); const [adding, setAdding] = useState(false); const [added, setAdded] = useState(""); const [depType, setDepType] = useState<string | null>(null); const [savType, setSavType] = useState<string | null>(null);
   return (<>
-    <div className="tabs">{TABS.map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+    <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+      <div className="tabs" style={{ flex: 1 }}>{TABS.map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</div>
+      {canAddAsset() && <button className="btn btn-p" onClick={() => { setAdded(""); setAdding(true); }}>+ Add asset</button>}
+    </div>
+    {added && <div className="small" style={{ color: "var(--teal)", margin: "6px 0" }}>{added}</div>}
+    {adding && <AddAsset onClose={() => setAdding(false)} onOpenDeposit={(code) => { setAdding(false); setAdded(""); setTab("Deposits"); setDepType(code); }} onOpenSavings={(code) => { setAdding(false); setAdded(""); setTab("Savings accounts"); setSavType(code); }} onSaved={(m, c) => { setAdding(false); setAdded(m); setTick((t) => t + 1); if (c === "market") setTab("Holdings"); }} />}
     {tab === "Holdings" && <Holdings key={tick} onImport={() => setTab("Imports")} />}
-    {tab === "Deposits" && <Deposits key={tick} />}
+    {tab === "Holdings" && <BondPayments key={"bp" + tick} />}
+    {tab === "Deposits" && <Deposits key={tick} startType={depType} onStarted={() => setDepType(null)} />}
+    {tab === "Savings accounts" && <SavingsAccounts key={"sv" + tick} startScheme={savType} onStarted={() => setSavType(null)} />}
     {tab === "Performance" && <Performance />}
     {tab === "Capital gains" && <><CapitalGains key={tick} /><FmvLoader /></>}
     {tab === "Harvest" && <Harvest />}
@@ -40,7 +52,7 @@ const EMPTY_DEPOSIT = { entity_id: "", kind: "fd", type_code: "fd_regular", bank
 
 /** "Add asset" step 1 (roadmap item): fixed & recurring deposits only for now — manual entry, generates its own
  *  expected-receipts schedule on save. Bank-statement matching against those receipts is a later step. */
-function Deposits() {
+function Deposits({ startType, onStarted }: { startType?: string | null; onStarted?: () => void }) {
   const { data, error, loading, refetch } = useApi<any[]>("/deposits?status=all");
   const ents = useApi<any[]>("/entities"); const banks = useApi<any[]>("/bank-accounts"); const types = useApi<any[]>("/deposit-types"); const cats = useApi<any[]>("/deposit-exception-categories");
   const [open, setOpen] = useState<string | null>(null); const [add, setAdd] = useState(false); const [err, setErr] = useState("");
@@ -48,6 +60,11 @@ function Deposits() {
   const [rcv, setRcv] = useState<{ id: string; label: string; amount: string; received_on: string; outflow: boolean; adjust: boolean } | null>(null); const [msg, setMsg] = useState(""); const [showClosed, setShowClosed] = useState(false);
   const [fc, setFc] = useState<any | null>(null);
   const isOwner = (session.get()?.families.find((x) => x.id === session.family())?.role ?? "viewer") === "owner";
+  useEffect(() => {
+    if (!startType || !types.data || !ents.data) return; const t = types.data.find((x: any) => x.code === startType); onStarted?.(); if (!t) return;
+    setErr(""); setMsg(""); setEditId(null); setLockedWhy(null); setAdd(true);
+    setF({ ...EMPTY_DEPOSIT, entity_id: ents.data[0]?.id ?? "", kind: t.kind, type_code: t.code, bucket: "income", tds_applicable: t.default_tds, payout_frequency: t.default_payout ?? "at_maturity", rate_pct: t.default_rate_pct != null ? String(t.default_rate_pct) : "" });
+  }, [startType, types.data, ents.data]);   // eslint-disable-line react-hooks/exhaustive-deps
   if (loading || error) return <Status loading={loading} error={error} />;
   const receive = async () => {
     if (!rcv) return; setErr(""); setMsg("");
@@ -83,7 +100,10 @@ function Deposits() {
   };
   const typeList = (types.data ?? []).filter((t) => t.kind === f.kind); const curType = (types.data ?? []).find((t) => t.code === f.type_code);
   const pickKind = (kind: string) => { const t = (types.data ?? []).find((x) => x.code === (kind === "fd" ? "fd_regular" : "rd_regular")); setF({ ...f, kind, type_code: t?.code ?? (kind === "fd" ? "fd_regular" : "rd_regular"), ...(t?.default_payout && kind === "fd" ? { payout_frequency: t.default_payout } : {}), tds_applicable: t ? t.default_tds : f.tds_applicable }); };
-  const pickType = (code: string) => { const t = (types.data ?? []).find((x) => x.code === code); setF({ ...f, type_code: code, ...(t?.default_payout && f.kind === "fd" ? { payout_frequency: t.default_payout } : {}), ...(t && !editId ? { tds_applicable: t.default_tds } : {}), ...(t?.min_tenure_months && t.min_tenure_months === t.max_tenure_months ? (f.kind === "rd" ? { tenure_months: String(t.min_tenure_months) } : {}) : {}) }); };
+  const fixedTenure = (t: any) => (t?.min_tenure_months && t.min_tenure_months === t.max_tenure_months ? t.min_tenure_months : null);
+  const addMonthsTo = (d: string, n: number) => { if (!d) return ""; const [y, m, dd] = d.split("-").map(Number); const tot = m - 1 + n; const ny = y + Math.floor(tot / 12); const nm = (tot % 12) + 1; const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate(); return `${ny}-${String(nm).padStart(2, "0")}-${String(Math.min(dd, last)).padStart(2, "0")}`; };
+  const pickStart = (v: string) => { const n = f.kind === "fd" && !editId ? fixedTenure(curType) : null; setF({ ...f, start_date: v, ...(n && v ? { maturity_date: addMonthsTo(v, n) } : {}) }); };
+  const pickType = (code: string) => { const t = (types.data ?? []).find((x) => x.code === code); setF({ ...f, type_code: code, ...(t && !editId && t.default_rate_pct != null ? { rate_pct: String(t.default_rate_pct) } : {}), ...(t && !editId && f.kind === "fd" && fixedTenure(t) && f.start_date ? { maturity_date: addMonthsTo(f.start_date, fixedTenure(t)) } : {}), ...(t?.default_payout && f.kind === "fd" ? { payout_frequency: t.default_payout } : {}), ...(t && !editId ? { tds_applicable: t.default_tds } : {}), ...(t?.min_tenure_months && t.min_tenure_months === t.max_tenure_months ? (f.kind === "rd" ? { tenure_months: String(t.min_tenure_months) } : {}) : {}) }); };
   const todayStr = new Date().toISOString().slice(0, 10);
   const rs = (v: any) => "₹" + Number(v ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
   const loadEstimate = async (n: any) => {
@@ -171,10 +191,10 @@ function Deposits() {
         <Field label="Entity"><select style={inp} disabled={!!editId} value={f.entity_id} onChange={(e) => setF({ ...f, entity_id: e.target.value })}><option value="">—</option>{(ents.data ?? []).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></Field>
         <Field label="Kind"><select style={inp} disabled={!!editId} value={f.kind} onChange={(e) => pickKind(e.target.value)}><option value="fd">Fixed deposit</option><option value="rd">Recurring deposit</option></select></Field>
         <Field label="Type"><select style={inp} disabled={lockedTerm} value={f.type_code} onChange={(e) => pickType(e.target.value)}>{typeList.map((t) => <option key={t.code} value={t.code}>{t.label}</option>)}</select></Field>
-        <Field label="Bank"><input style={inp} value={f.bank} onChange={(e) => setF({ ...f, bank: e.target.value })} /></Field>
+        <Field label={curType?.govt_scheme ? "Post office / bank" : "Bank"}><input style={inp} value={f.bank} placeholder={curType?.govt_scheme ? "e.g. India Post, SBI" : ""} onChange={(e) => setF({ ...f, bank: e.target.value })} /></Field>
         <Field label="Account / certificate no."><input style={inp} value={f.account_no} onChange={(e) => setF({ ...f, account_no: e.target.value })} /></Field>
         <Field label="Rate % p.a."><input style={inp} type="number" step="0.01" disabled={lockedTerm} value={f.rate_pct} onChange={(e) => setF({ ...f, rate_pct: e.target.value })} onWheel={(e) => (e.target as HTMLInputElement).blur()} /></Field>
-        <Field label="Start date"><input style={inp} type="date" disabled={lockedTerm} value={f.start_date} onChange={(e) => setF({ ...f, start_date: e.target.value })} /></Field>
+        <Field label="Start date"><input style={inp} type="date" disabled={lockedTerm} value={f.start_date} onChange={(e) => pickStart(e.target.value)} /></Field>
         {f.kind === "fd" ? <>
           <Field label="Principal (₹)"><input style={inp} type="number" disabled={lockedTerm} value={f.principal} onChange={(e) => setF({ ...f, principal: e.target.value })} onWheel={(e) => (e.target as HTMLInputElement).blur()} /></Field>
           <Field label="Maturity date"><input style={inp} type="date" disabled={lockedTerm} value={f.maturity_date} onChange={(e) => setF({ ...f, maturity_date: e.target.value })} /></Field>
@@ -187,6 +207,7 @@ function Deposits() {
         <Field label="Payout / linked bank account"><select style={inp} value={f.payout_bank_account_id} onChange={(e) => setF({ ...f, payout_bank_account_id: e.target.value })}><option value="">—</option>{(banks.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.bank} {b.account_masked}</option>)}</select></Field>
       </div>
       {curType && <div className="small" style={{ marginTop: 8, color: curType.break_rule === "never" ? "var(--amber)" : "var(--mute, #6b7280)" }}><b>{curType.label}:</b> {curType.description}{curType.break_rule === "never" ? " It cannot be closed before maturity." : curType.break_rule === "after_lock_in" ? ` It can be closed only after ${curType.lock_in_months} months.` : ` Early-closure penalty is usually about ${curType.default_penalty_pct}% off the rate (you can adjust it when closing).`}{curType.min_tenure_months && curType.min_tenure_months === curType.max_tenure_months ? ` Fixed tenure: ${curType.min_tenure_months} months.` : ""}</div>}
+      {curType?.govt_scheme && curType.rate_note && <div className="small" style={{ marginTop: 6, padding: "6px 8px", borderRadius: 6, background: "var(--amberSoft)" }}><b>Rate:</b> {curType.rate_note} Interest is worked out for you from this rate: {curType.compounding === "yearly" ? "added once a year and paid at maturity" : curType.default_payout === "quarterly" ? "paid every quarter, not added to the deposit" : "as the scheme sets it"}. The maturity date follows the fixed term of the scheme.</div>}
       <label className="small row gap" style={{ marginTop: 8 }}><input type="checkbox" checked={f.tds_applicable} onChange={(e) => setF({ ...f, tds_applicable: e.target.checked })} /> TDS applicable</label>
       {editId && !lockedTerm && <div className="small mute" style={{ marginTop: 6 }}>Changing the amount, rate or dates rebuilds the schedule of expected payments from scratch.</div>}
       {err && <div className="err">{err}</div>}
@@ -256,15 +277,45 @@ function Deposits() {
 
 function Holdings({ onImport }: { onImport: () => void }) {
   const [open, setOpen] = useState<string | null>(null);
-  const { data, error, loading } = useApi<any>("/holdings");
+  const { data, error, loading, refetch } = useApi<any>("/holdings"); const [msg, setMsg] = useState(""); const [err, setErr] = useState(""); const [upd, setUpd] = useState<any | null>(null); const [txn, setTxn] = useState<any | null>(null); const [edit, setEdit] = useState<any | null>(null);
+  // a price can be typed only where nobody prices it: not a fund (AMFI), not a G-Sec or T-bill (worked out), not a security the NSE feed prices
+  const canPrice = (h: any) => !["mf", "gsec", "tbill"].includes(h.type) && (!h.price || h.price_source === "manual");
+  const unitless = (h: any) => ["pms", "aif"].includes(h.type);
+  const savePrice = async () => {
+    setErr(""); setMsg("");
+    try { const body: any = { price_date: upd.on }; if (unitless(upd.h)) body.value = Number(upd.amount); else body.price = Number(upd.amount); const r: any = await api(`/holdings/${upd.h.id}/price`, { method: "POST", body: JSON.stringify(body) }); setMsg(`Updated ${r.instrument}: now ${inr(r.value)} as of ${fmtDate(r.price_date)}.`); setUpd(null); refetch(); } catch (e: any) { setErr(e.message); }
+  };
+  const canDel = ["owner", "member"].includes(session.get()?.families.find((x) => x.id === session.family())?.role ?? "viewer");
+  const remove = async (h: any) => {
+    if (!window.confirm(`Delete ${h.instrument} (${Number(h.quantity).toLocaleString("en-IN")} held) for ${h.entity_name}?
+
+Its purchase entries are removed too. This cannot be undone.
+If it came from an imported statement, importing that statement again brings it back.`)) return;
+    setErr(""); setMsg("");
+    try { const r: any = await api(`/holdings/${h.id}`, { method: "DELETE" }); setMsg(`Deleted ${r.deleted}.${r.note ? " " + r.note : ""}`); setOpen(null); refetch(); } catch (e: any) { setErr(e.message); }
+  };
   const lots = useApi<any[]>(open ? `/holdings/${open}/lots` : null);
   const openRow = open ? data?.items.find((h: any) => h.id === open) : null;
   const exposure = useApi<any>(openRow ? `/instruments/${openRow.instrument_id}/exposure` : null);
   if (loading || error) return <Status loading={loading} error={error} />;
   return (<>
-    <Card title="Holdings across entities" action={<div className="row gap"><span className="small mute">NSE close and AMFI NAV from the nightly feeds; unpriced instruments at cost; XIRR on open lots</span><button className="btn btn-s" onClick={onImport}><Upload size={13} /> Import CAS / contract note</button></div>}>
-      <table className="tbl"><thead><tr><th>Asset</th><th>Type</th><th>Entity</th><th>Bucket</th><th className="num">Qty</th><th className="num">Cost</th><th className="num">Value</th><th className="num">Gain</th><th className="num">XIRR</th><th className="num">Priced</th></tr></thead>
-        <tbody>{data!.items.map((h: any) => <tr key={h.id} onClick={() => setOpen(open === h.id ? null : h.id)} style={{ cursor: "pointer", background: open === h.id ? "var(--paper)" : undefined }}><td><b>{h.instrument}</b></td><td>{h.type}</td><td>{h.entity_name}</td><td><Pill tone={h.bucket === "growth" ? "blue" : h.bucket === "income" ? "teal" : undefined}>{h.bucket}</Pill></td><td className="num">{Number(h.quantity).toLocaleString("en-IN")}</td><td className="num">{inr(h.cost)}</td><td className="num">{inr(h.value)}</td><td className={`num ${Number(h.unrealised_gain) >= 0 ? "up" : "down"}`}>{h.unrealised_gain_pct}%</td><td className="num">{h.xirr_pct == null ? <span className="mute">—</span> : `${h.xirr_pct}%`}</td><td className="num small mute">{h.price ? fmtDate(h.price_date) : "cost"}</td></tr>)}
+    <Card title="Holdings across entities" action={<div className="row gap"><span className="small mute">NSE close and AMFI NAV from the nightly feeds; unpriced instruments at cost; XIRR on open lots</span><button className="btn btn-s" title="Reload the latest prices, values and XIRR" disabled={loading} onClick={() => { setMsg(""); setErr(""); refetch(); }}><RefreshCw size={13} /> {loading ? "Refreshing…" : "Refresh"}</button><button className="btn btn-s" onClick={onImport}><Upload size={13} /> Import CAS / contract note</button></div>}>
+      {msg && <div className="small" style={{ color: "var(--teal)", marginBottom: 6 }}>{msg}</div>}{err && <div className="err">{err}</div>}
+      {edit && <EditHolding h={edit} onClose={() => setEdit(null)} onSaved={(m) => { setEdit(null); setMsg(m); refetch(); }} />}
+      {txn && <AddTransaction h={txn} onClose={() => setTxn(null)} onSaved={(m) => { setTxn(null); setMsg(m); refetch(); }} />}
+      {upd && <div className="modal-bg" onClick={() => setUpd(null)}><div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ margin: 0 }}>{unitless(upd.h) ? "Update value" : "Update price"} — {upd.h.instrument}</h3>
+        <div className="small mute">{unitless(upd.h) ? "Enter what the latest statement says the whole holding is worth." : "Nothing prices this security by itself, so type its latest price."} Now: {inr(upd.h.value)}{upd.h.price ? ` (priced ${fmtDate(upd.h.price_date)})` : " (at cost, never priced)"}. {Number(upd.h.quantity).toLocaleString("en-IN")} held.</div>
+        <div className="grid-2">
+          <label className="field">{unitless(upd.h) ? "Value today (₹)" : "New price per unit (₹)"}<input type="number" step="any" value={upd.amount} onChange={(e) => setUpd({ ...upd, amount: e.target.value })} /></label>
+          <label className="field">As of<input type="date" max={new Date().toISOString().slice(0, 10)} value={upd.on} onChange={(e) => setUpd({ ...upd, on: e.target.value })} /></label>
+        </div>
+        {!unitless(upd.h) && Number(upd.amount) > 0 && <div className="small mute">The holding will be worth {inr(Number(upd.amount) * Number(upd.h.quantity))}.</div>}
+        {err && <div className="err">{err}</div>}
+        <div className="row gap" style={{ justifyContent: "flex-end", marginTop: 8 }}><button className="btn" onClick={() => setUpd(null)}>Cancel</button><button className="btn btn-p" disabled={!(Number(upd.amount) > 0)} onClick={savePrice}>Save</button></div>
+      </div></div>}
+      <table className="tbl"><thead><tr><th>Asset</th><th>Type</th><th>Entity</th><th>Bucket</th><th className="num">Qty</th><th className="num">Cost</th><th className="num">Value</th><th className="num">Gain</th><th className="num">XIRR</th><th className="num">Priced</th>{canDel && <th></th>}</tr></thead>
+        <tbody>{data!.items.map((h: any) => <tr key={h.id} onClick={() => setOpen(open === h.id ? null : h.id)} style={{ cursor: "pointer", background: open === h.id ? "var(--paper)" : undefined }}><td><b>{h.instrument}</b>{h.type === "aif" && Number(h.commitment) > 0 && <div className="small mute">Called {inr(h.called)} of {inr(h.commitment)} ({Math.round(Number(h.called) / Number(h.commitment) * 100)}%)</div>}</td><td>{h.type}</td><td>{h.entity_name}</td><td><Pill tone={h.bucket === "growth" ? "blue" : h.bucket === "income" ? "teal" : undefined}>{h.bucket}</Pill></td><td className="num">{Number(h.quantity).toLocaleString("en-IN")}</td><td className="num">{inr(h.cost)}</td><td className="num">{inr(h.value)}</td><td className={`num ${Number(h.unrealised_gain) >= 0 ? "up" : "down"}`}>{h.unrealised_gain_pct}%</td><td className="num">{h.xirr_pct == null ? <span className="mute">—</span> : `${h.xirr_pct}%`}</td><td className="num small mute">{!h.price && h.maturity_date && ["gsec", "tbill", "bond"].includes(h.type) ? <span style={{ color: "var(--teal)" }} title="No market price: the value moves evenly from what you paid to the face value at maturity">accrued</span> : h.price ? (h.price_source === "manual" ? <span style={{ color: "var(--amber)" }} title="You typed this price; no feed updates it">manual · {fmtDate(h.price_date)}</span> : fmtDate(h.price_date)) : "cost"}</td>{canDel && <td><div className="row gap"><button className="btn btn-s" title="Correct the details or a purchase" onClick={(e) => { e.stopPropagation(); setErr(""); setMsg(""); setEdit(h); }}>Edit</button><button className="btn btn-s" title="Buy more, sell, or record a dividend / interest" onClick={(e) => { e.stopPropagation(); setErr(""); setMsg(""); setTxn(h); }}>Add transaction</button>{canPrice(h) && <button className="btn btn-s" title="Type today's price (nothing updates it by itself)" onClick={(e) => { e.stopPropagation(); setErr(""); setUpd({ h, amount: unitless(h) ? String(h.value) : String(h.price ?? h.avg_cost), on: new Date().toISOString().slice(0, 10) }); }}>{unitless(h) ? "Update value" : "Update price"}</button>}<button className="btn btn-s" title="Delete this holding and its entries" onClick={(e) => { e.stopPropagation(); remove(h); }}>Delete</button></div></td>}</tr>)}
           <tr className="total"><td>Total</td><td colSpan={4}></td><td className="num">{inr(data!.totals.cost)}</td><td className="num">{inr(data!.totals.value)}</td><td colSpan={3}></td></tr></tbody></table>
     </Card>
     {open && <Card title="Lots (FIFO order)">{lots.loading ? "Loading…" : <table className="tbl"><thead><tr><th>Buy date</th><th className="num">Qty</th><th className="num">Remaining</th><th className="num">Unit cost</th><th className="num">Charges</th><th>Term now</th></tr></thead><tbody>{(lots.data ?? []).map((l: any) => <tr key={l.id}><td>{fmtDate(l.buy_date)}</td><td className="num">{l.quantity}</td><td className="num">{l.remaining_qty}</td><td className="num">₹{Number(l.unit_cost).toFixed(2)}</td><td className="num">₹{l.charges}</td><td><Pill tone={l.term_now === "long" ? "teal" : "amber"}>{l.term_now}</Pill></td></tr>)}</tbody></table>}</Card>}
