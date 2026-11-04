@@ -173,7 +173,7 @@ function sellFrom(ctx: Ctx, cands: Candidate[], amount: number, reasonIn: string
   return { moves, raised: r2(amount - Math.max(0, left)) };
 }
 
-export function solve(snap: RbSnapshot, objective: Objective, constraintsIn: Partial<RbConstraints> = {}, opts: { taxYearEnd?: boolean; excludeHoldingIds?: string[]; excludeNeedIds?: string[]; dateOverrides?: Record<string, string> } = {}): RbPlan {
+export function solve(snap: RbSnapshot, objective: Objective, constraintsIn: Partial<RbConstraints> = {}, opts: { taxYearEnd?: boolean; excludeHoldingIds?: string[]; excludeNeedIds?: string[]; excludeBuyClasses?: string[]; dateOverrides?: Record<string, string> } = {}): RbPlan {
   const c = { ...DEFAULT_CONSTRAINTS, ...Object.fromEntries(Object.entries(constraintsIn).filter(([, v]) => v !== undefined && v !== null)) } as RbConstraints;
   const holdings = snap.holdings.filter((h) => !(opts.excludeHoldingIds ?? []).includes(h.id));
   const s: RbSnapshot = { ...snap, holdings, needs: snap.needs.filter((n) => !(opts.excludeNeedIds ?? []).includes(n.id)).sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date)) };
@@ -217,7 +217,9 @@ export function solve(snap: RbSnapshot, objective: Objective, constraintsIn: Par
   }
   const totalAfterNeeds = mid[0]?.total ?? total;
   const sellCap = r2(totalAfterNeeds * c.max_turnover_pct / 100); let sold = ctx.moves.filter((m) => m.kind === "sell" || m.kind === "redeem").reduce((x, m) => x + m.amount, 0);
-  let pool = idle; const pooled: { seq: number; settles: string }[] = [];
+  // keep cash inside the policy's own cash range: the float is not the only floor
+  const cashMin = s.targets.find((t) => t.key === "cash")?.min ?? 0; const keepCash = Math.max(0, r2(cashMin / 100 * totalAfterNeeds - s.floatRequired));
+  let pool = Math.max(0, r2(idle - keepCash)); const pooled: { seq: number; settles: string }[] = [];
   for (const [k, d] of Object.entries(desired)) { const a = mid.find((x) => x.key === k)!; if (a.actual_pct <= d + 0.05 || k === "cash") continue;
     if (UNTRADEABLE.has(k)) { ctx.warnings.push(`${k.replace("_", " ")} is ${a.actual_pct}% against a ${d}% target — it is not sold by an order; put new money into the asset classes that are below target instead`); continue; }
     let amt = r2((a.actual_pct - d) / 100 * totalAfterNeeds); if (sold + amt > sellCap) { const room = Math.max(0, sellCap - sold); if (room < c.min_trade) { ctx.warnings.push(`turnover cap ${c.max_turnover_pct}% reached — ${k} trim of ${inr(amt)} left for the next run`); continue; } ctx.warnings.push(`turnover cap ${c.max_turnover_pct}% — ${k} trim reduced from ${inr(amt)} to ${inr(room)}`); amt = r2(room); }
@@ -227,8 +229,8 @@ export function solve(snap: RbSnapshot, objective: Objective, constraintsIn: Par
       ctx.moves.push(m); pool += m.amount; pooled.push({ seq: m.seq, settles: m.settlesOn }); classAdj[k] = (classAdj[k] ?? 0) - m.amount; classAdj.cash = (classAdj.cash ?? 0) + m.amount; sold += m.amount; } // proceeds sit in cash until a buy uses them
   }
   // spread the spare money over every class that is below target, in proportion to its gap, so the first class does not take it all
-  const gapSum = Object.entries(desired).reduce((x, [k, d]) => { const a = mid.find((y) => y.key === k); return a && k !== "cash" && !UNTRADEABLE.has(k) && a.actual_pct < d - 0.05 ? x + (d - a.actual_pct) / 100 * totalAfterNeeds : x; }, 0); const poolStart = pool;
-  for (const [k, d] of Object.entries(desired)) { const a = mid.find((x) => x.key === k)!; if (a.actual_pct >= d - 0.05 || k === "cash" || pool < c.min_trade) continue;
+  const gapSum = Object.entries(desired).reduce((x, [k, d]) => { const a = mid.find((y) => y.key === k); return a && k !== "cash" && !UNTRADEABLE.has(k) && !(opts.excludeBuyClasses ?? []).includes(k) && a.actual_pct < d - 0.05 ? x + (d - a.actual_pct) / 100 * totalAfterNeeds : x; }, 0); const poolStart = pool;
+  for (const [k, d] of Object.entries(desired)) { const a = mid.find((x) => x.key === k)!; if (a.actual_pct >= d - 0.05 || k === "cash" || pool < c.min_trade || (opts.excludeBuyClasses ?? []).includes(k)) continue;
     if (UNTRADEABLE.has(k)) { ctx.warnings.push(`${k} below target (${a.actual_pct}% vs ${d}%) — needs a new commitment, not an order`); continue; }
     const gapAmt = (d - a.actual_pct) / 100 * totalAfterNeeds; const amt = r2(Math.min(gapAmt, pool, gapAmt * Math.min(1, poolStart / Math.max(gapSum, 1)))); if (amt < c.min_trade) continue; const inst = s.buyInstrument[k as AllocClass]; const dep = pooled.length ? pooled.reduce((x, p) => (p.settles > x.settles ? p : x)) : null;
     const planned = dep ? dep.settles : s.asOf; const settles = addDays(planned, inst?.settlementDays ?? 1);
