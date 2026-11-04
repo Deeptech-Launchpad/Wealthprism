@@ -79,8 +79,9 @@ export function totp(secretB32: string, at = Date.now()): string {
 }
 /** Step-up check used by approvals and signatures. Dev bypass: proof "000000" when NODE_ENV !== production. */
 export async function verifyStepUp(userId: string, method: string, proof: string): Promise<boolean> {
+  if (method === "totp") proof = String(proof ?? "").replace(/[\s-]/g, "");   // authenticator apps show "123 456"
   if (process.env.NODE_ENV !== "production" && proof === "000000") return true;
-  if (method === "totp") { const u = (await pool.query("select mfa_secret from users where id = $1", [userId])).rows[0]; return !!u?.mfa_secret && totp(u.mfa_secret) === proof; }
+  if (method === "totp") { const u = (await pool.query("select mfa_secret from users where id = $1", [userId])).rows[0]; const now = Date.now(); return !!u?.mfa_secret && [0, -30000, 30000].some((d) => totp(u.mfa_secret, now + d) === proof); }   // one 30 s step either side, like login
   if (method === "passkey") return verifyPasskeyStepUp(userId, proof);
   return false;
 }

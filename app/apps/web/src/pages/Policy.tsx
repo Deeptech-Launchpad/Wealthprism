@@ -30,11 +30,12 @@ export function Policy() {
     {!list.data ? <Status loading={list.loading} error={list.error} /> : <>
       {tab === "Policies" && <Policies key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} onChange={bump} onDraft={(id, vid) => { setSel(id); setDraft(vid); setTab("Builder"); }} onOpen={open} />}
       {tab === "Builder" && <Builder key={tick + (draft ?? "")} list={list.data} draftId={draft} setDraft={setDraft} onChange={bump} />}
-      {tab === "Allocation & bands" && <Allocation key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} />}
-      {tab === "Risk & guardrails" && <Risk key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} />}
-      {tab === "Compliance" && <Compliance key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} onChange={bump} />}
-      {tab === "Reviews" && <Reviews key={tick} list={list.data} onChange={bump} onDraft={(id, vid) => { setSel(id); setDraft(vid); setTab("Builder"); }} />}
-      {tab === "Document" && <Document key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} />}
+      {list.data.length === 0 && tab !== "Policies" && tab !== "Builder" && <Card title="No investment policy yet"><div className="small mute">An investment policy sets your target mix (for example 60% growth, 32% income, 8% liquidity), the allowed bands around it and the guardrails. This tab shows how your holdings compare with it, so it stays empty until a policy exists.</div><div className="row gap" style={{ marginTop: 10 }}><button className="btn btn-p" onClick={() => setTab("Policies")}>Create a policy</button></div></Card>}
+      {tab === "Allocation & bands" && list.data.length > 0 && <Allocation key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} />}
+      {tab === "Risk & guardrails" && list.data.length > 0 && <Risk key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} />}
+      {tab === "Compliance" && list.data.length > 0 && <Compliance key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} onChange={bump} />}
+      {tab === "Reviews" && list.data.length > 0 && <Reviews key={tick} list={list.data} onChange={bump} onDraft={(id, vid) => { setSel(id); setDraft(vid); setTab("Builder"); }} />}
+      {tab === "Document" && list.data.length > 0 && <Document key={tick} list={list.data} selectedId={selectedId} onSelect={setSel} />}
     </>}
   </>);
 }
@@ -46,12 +47,12 @@ function Picker({ list, selectedId, onSelect, filter }: { list: any[]; selectedI
 function Policies({ list, selectedId, onSelect, onChange, onDraft, onOpen }: { list: any[]; selectedId: string | null; onSelect: (id: string) => void; onChange: () => void; onDraft: (id: string, vid: string) => void; onOpen: (id: string, t: (typeof TABS)[number]) => void }) {
   const d = useApi<any>(selectedId ? `/policies/${selectedId}` : null); const [err, setErr] = useState(""); const [busy, setBusy] = useState("");
   const [creating, setCreating] = useState(false);
-  const amend = async () => { if (!selectedId) return; setBusy("amend"); setErr(""); try { const p = list.find((x) => x.id === selectedId); if (p.open_draft) return onDraft(selectedId, p.open_draft.id); const v = await api<any>(`/policies/${selectedId}/versions`, { method: "POST", body: JSON.stringify({ change_summary: "Amendment" }) }); onDraft(selectedId, v.id); } catch (e: any) { setErr(e.message); } finally { setBusy(""); } };
+  const amend = async () => { if (!selectedId) return; setBusy("amend"); setErr(""); try { const p = list.find((x) => x.id === selectedId) ?? d.data; if (p?.open_draft) return onDraft(selectedId, p.open_draft.id); const v = await api<any>(`/policies/${selectedId}/versions`, { method: "POST", body: JSON.stringify({ change_summary: "Amendment" }) }); onDraft(selectedId, v.id); } catch (e: any) { setErr(e.message); } finally { setBusy(""); } };
   const evaluate = async () => { if (!selectedId) return; setBusy("eval"); setErr(""); try { await api(`/policies/${selectedId}/compliance`, { method: "POST", body: "{}" }); onChange(); } catch (e: any) { setErr(e.message); } finally { setBusy(""); } };
   const p = d.data; const items: any[] = (p?.effective?.items ?? []).filter((i: any) => !/_id$/.test(i.key)); // ids are plumbing, not clauses
   return (<>
     {err && <div className="err">{err}</div>}
-    {creating && <NewPolicy onClose={() => setCreating(false)} onCreated={(id, vid) => { setCreating(false); onDraft(id, vid); }} />}
+    {creating && <NewPolicy onClose={() => setCreating(false)} onCreated={(id, vid) => { setCreating(false); onChange(); onDraft(id, vid); }} />}
     <div className="grid-2" style={{ gridTemplateColumns: "minmax(280px, 1fr) 2fr" }}>
       <Card title="Investment policies" action={<button className="btn btn-s btn-p" onClick={() => setCreating(true)}><Plus size={14} /> New policy</button>}>
         {list.map((x) => <div key={x.id} className="attn" style={{ cursor: "pointer", background: x.id === selectedId ? "var(--paper, #F5F6F8)" : undefined }} onClick={() => onSelect(x.id)}>
