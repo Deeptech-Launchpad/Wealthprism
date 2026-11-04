@@ -3,12 +3,13 @@
 import type pg from "pg";
 import { solve, evaluateTriggers, nextCalendarRun, lotConstraintsFor, allocClassOf, requiredFloat, fyOf, addDays, type RbSnapshot, type RbPlan, type RbMove, type Objective, type Fired, type AllocClass } from "@fo/finance";
 import { loadState, tablesProvider } from "./planning.js";
-import { effectiveFor, governingPolicy, evaluatePolicy } from "./policy.js";
+import { effectiveFor, governingPolicy, evaluatePolicy, ensureProgramFor } from "./policy.js";
 import { notifyTask } from "./notify.js";
 
-export const iso = (d: any) => (d ? new Date(d).toISOString().slice(0, 10) : null);
+const ymd = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+export const iso = (d: any) => (d ? (typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : ymd(new Date(d))) : null);
 const r2 = (n: number) => Math.round(n * 100) / 100 + 0;
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => ymd(new Date());
 export class RebalanceError extends Error { constructor(public status: number, message: string, public extra?: unknown) { super(message); } }
 const NEED_KIND: Record<string, { kind: string; priority: number; flex: number }> = { advance_tax: { kind: "tax_instalment", priority: 1, flex: 0 }, gst: { kind: "tax_instalment", priority: 1, flex: 0 }, property_tax: { kind: "tax_instalment", priority: 1, flex: 15 }, drawdown: { kind: "capital_call", priority: 1, flex: 0 }, card_due: { kind: "planned_expense", priority: 2, flex: 0 }, emi: { kind: "liability_payment", priority: 1, flex: 0 }, manual: { kind: "planned_expense", priority: 2, flex: 7 } };
 
@@ -85,6 +86,11 @@ export async function buildSnapshot(c: pg.PoolClient, familyId: string, p: Progr
     return { id: h.id, entityId: h.entityId, instrumentId: h.instrumentId, name: h.name, allocClass: cls, bucket: h.bucket, price: h.price, assetClass: h.assetClass, instrumentType: i.type ?? "mf", lots, maturesOn: iso([...lc.values()].find((k) => h.lots.some((l) => l.id === k.lot_id))?.matures_on) ?? i.meta?.maturity_date ?? null, liquidityClass: null as string | null }; });
   // private rounds and fund units sit in the allocation as an untradeable alternatives sleeve (one locked virtual lot each)
   for (const pr of goal ? state.privates.filter((x) => goal.linkedPrivateIds.includes(x.id)) : state.privates) if (pr.mark > 0) holdings.push({ id: pr.id, entityId: pr.entityId, instrumentId: pr.id, name: pr.name, allocClass: "alternatives", bucket: pr.bucket, price: pr.mark, assetClass: "unlisted_equity", instrumentType: "private", lots: [{ id: `private:${pr.id}`, buyDate: pr.investedOn, qty: 1, unitCost: pr.cost, lockInUntil: "2099-12-31", settlementDays: 90 }], maturesOn: null, liquidityClass: "locked" });
+  // property and physical gold are part of the family's mix but are never bought or sold by an order: one locked sleeve each, so the percentages are true
+  if (!goal) {
+    for (const pp of state.properties) { const v = Number(pp.value) * Number(pp.ownershipPct) / 100; if (v > 0) holdings.push({ id: `property:${pp.id}`, entityId: pp.entityId, instrumentId: pp.id, name: pp.name, allocClass: "real_estate", bucket: "income", price: v, assetClass: "real_estate", instrumentType: "property", lots: [{ id: `private:${pp.id}`, buyDate: pp.acquisitionDate, qty: 1, unitCost: Number(pp.cost), lockInUntil: "2099-12-31", settlementDays: 90 }], maturesOn: null, liquidityClass: "locked" }); }
+    for (const g of (await c.query("select id, entity_id, name, coalesce(current_value, cost, 0) v, acquired_on::text acquired_on from lifestyle_assets where family_id=$1 and deleted_at is null and include_in_net_worth and (kind = 'jewellery' or name ilike '%gold%') and ($2::uuid is null or entity_id=$2)", [familyId, p.entity_id])).rows) { const v = Number(g.v); if (v > 0) holdings.push({ id: `gold:${g.id}`, entityId: g.entity_id, instrumentId: g.id, name: g.name, allocClass: "gold", bucket: "growth", price: v, assetClass: "gold", instrumentType: "physical_gold", lots: [{ id: `private:${g.id}`, buyDate: g.acquired_on ?? day, qty: 1, unitCost: v, lockInUntil: "2099-12-31", settlementDays: 3 }], maturesOn: null, liquidityClass: "locked" }); }
+  }
   const wc = await floatFor(c, familyId, day); const cash = goal ? [] : wc.accounts.filter((a) => !p.entity_id || a.entityId === p.entity_id);
   const needs = (await c.query("select * from funding_needs where family_id=$1 and status in ('planned','partially_funded','due') and need_date between $2 and $3 and ($4::uuid is null or entity_id=$4) and ($5::uuid is null or goal_id=$5) order by priority, need_date", [familyId, addDays(day, -30), addDays(day, p.need_lookahead_days), p.entity_id, p.goal_id])).rows
     .map((n) => ({ id: n.id, label: n.label, date: iso(n.need_date)!, amount: Number(n.amount), priority: Number(n.priority) as 1 | 2 | 3, flexibilityDays: Number(n.flexibility_days), entityId: n.entity_id, fundedAmount: Number(n.funded_amount), bankAccountId: n.bank_account_id }));
@@ -97,7 +103,7 @@ export async function buildSnapshot(c: pg.PoolClient, familyId: string, p: Progr
   const year = Number(day.slice(0, 4)); const glideGrowthPct = glide?.length ? (() => { const st = glide.map((s) => ({ y: Number(s.year), p: Number(s.growth_pct ?? s.equity_pct) })).sort((a, b) => a.y - b.y); if (year <= st[0].y) return st[0].p; if (year >= st[st.length - 1].y) return st[st.length - 1].p; for (let i = 1; i < st.length; i++) if (year <= st[i].y) return r2(st[i - 1].p + (st[i].p - st[i - 1].p) * (year - st[i - 1].y) / (st[i].y - st[i - 1].y)); return null; })() : null;
   // default instrument per class: the most liquid one the family already holds, else the system suggestion
   const buyInstrument: RbSnapshot["buyInstrument"] = {};
-  for (const h of holdings) if (!buyInstrument[h.allocClass] || (h.instrumentType === "mf" && buyInstrument[h.allocClass]!.settlementDays > 1)) buyInstrument[h.allocClass] = { id: h.instrumentId, name: h.name, settlementDays: Math.min(...h.lots.map((l) => l.settlementDays)) };
+  for (const h of holdings.filter((x) => !["stock", "private", "property", "physical_gold"].includes(x.instrumentType))) if (!buyInstrument[h.allocClass] || (h.instrumentType === "mf" && buyInstrument[h.allocClass]!.settlementDays > 1)) buyInstrument[h.allocClass] = { id: h.instrumentId, name: h.name, settlementDays: Math.min(...h.lots.map((l) => l.settlementDays)) };
   for (const d of (await c.query("select id, name, type, asset_class from instruments where amfi_code is not null or type in ('etf','gsec','tbill') order by name")).rows) { const cls = allocClassOf(d.asset_class, d.type, d.name); if (!buyInstrument[cls]) buyInstrument[cls] = { id: d.id, name: d.name, settlementDays: 1 }; }
   return { asOf: day, holdings, cash, floatRequired: goal ? 0 : wc.floatRequired, needs, targets, glideGrowthPct, contributions, rules, slabRate: Object.fromEntries(ents.map((e) => [e.id, Number(e.slab_rate ?? 30)])), exemptionRemaining, fyEnd: `${Number(fy.slice(0, 4)) + 1}-03-31`, buyInstrument, policy_version_id: policy?.current_version_id ?? null, policy_name: policy?.name ?? null, goal };
 }
@@ -129,13 +135,15 @@ export async function runProgram(c: pg.PoolClient, familyId: string, programId: 
   const noAction = plan.moves.length === 0;
   const run = (await c.query("insert into rebalance_runs (family_id, program_id, triggered_by, trigger_detail, run_at, snapshot, drift, status, objective, note) values ($1,$2,$3::rebalance_trigger,$4,now(),$5,$6,$7::rebalance_run_status,$8,$9) returning *", [familyId, programId, opts.triggeredBy ?? "manual", JSON.stringify(opts.detail ?? {}), JSON.stringify(snapshot), JSON.stringify(drift), noAction ? "no_action" : "plan_drafted", objective, opts.note ?? (noAction ? `no action: ${plan.warnings.join("; ") || `max drift ${plan.summary.drift_before_max_pp} pp, needs covered by cash`}` : null)])).rows[0];
   let planId: string | null = null;
-  if (!noAction) { planId = await persistPlan(c, familyId, run.id, plan, 1, snap); await c.query("update rebalance_runs set plan_id=$2 where id=$1", [run.id, planId]);
+  if (!noAction) { await c.query("update rebalance_plans set status='superseded' where status='draft' and run_id in (select id from rebalance_runs where program_id=$1)", [programId]); planId = await persistPlan(c, familyId, run.id, plan, 1, snap); await c.query("update rebalance_runs set plan_id=$2 where id=$1", [run.id, planId]);
+    { const t = (await c.query("insert into tasks (family_id, entity_id, module, title, reason, severity, source_type, source_id, verification) select $1,$2,'rebalance',$3,$4,2,'rebalance_plan',$5,'na' where not exists (select 1 from tasks where source_type='rebalance_plan' and source_id=$5 and status='open') returning *", [familyId, p.entity_id, `Rebalancing plan ready to review: ${p.name}`, `${plan.moves.length} suggested move(s) to bring the mix back inside the policy ranges. Open Rebalancing → Plan to read what to invest in; nothing happens until you approve.`, planId])).rows[0]; if (t) await notifyTask(c, t); }
     if (plan.summary.needs_uncovered > 0) { const t = (await c.query("insert into tasks (family_id, entity_id, module, title, reason, severity, source_type, source_id, verification) select $1,$2,'rebalance',$3,$4,1,'rebalance_run',$5,'na' where not exists (select 1 from tasks where source_type='rebalance_run' and source_id=$5 and status='open') returning *", [familyId, p.entity_id, `Funding gap: ${p.name}`, plan.warnings.filter((w) => /uncovered/.test(w)).join("; ").slice(0, 900), run.id])).rows[0]; if (t) await notifyTask(c, t); } }
   return { run: { ...run, run_at: run.run_at, plan_id: planId }, plan, plan_id: planId, snapshot: snap };
 }
 /** Nightly: evaluate every active program's triggers and run the first one that fires (one open plan per program at a time). */
 export async function evaluatePrograms(c: pg.PoolClient, familyId: string, day = today()) {
   await gatherNeeds(c, familyId, day).catch(() => null);
+  for (const pol of (await c.query("select * from investment_policies where family_id=$1 and deleted_at is null and current_version_id is not null and scope <> 'goal'", [familyId])).rows) await ensureProgramFor(c, familyId, pol);
   const programs = (await c.query("select * from rebalance_programs where family_id=$1 and active order by scope, name", [familyId])).rows as ProgramRow[];
   const out: any[] = [];
   for (const p of programs) {

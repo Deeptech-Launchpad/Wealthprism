@@ -187,6 +187,14 @@ export async function createVersion(c: pg.PoolClient, familyId: string, policyId
   return v.id as string;
 }
 /** Activation (FO-142): supersede the current version, write the clauses into the live tables atomically, schedule the next review, render the IPS. */
+/** A policy that is active gets its rebalancing program, so a breach is watched and a plan is drafted without anyone having to set it up. One per scope; an existing program is left alone. */
+export async function ensureProgramFor(c: pg.PoolClient, familyId: string, policy: any) {
+  if (!policy?.current_version_id || policy.scope === "goal") return;
+  const rb = (await c.query("select rebalancing from policy_versions where id=$1", [policy.current_version_id])).rows[0]?.rebalancing ?? {};
+  const rrule = rb.method === "bands" ? null : rb.calendar === "monthly" ? "FREQ=MONTHLY;BYMONTHDAY=1" : rb.calendar === "annual" ? "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=1" : rb.calendar === "half-yearly" ? "FREQ=MONTHLY;INTERVAL=6;BYMONTHDAY=1" : "FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=1";
+  const constraints = { min_trade: 2000, max_turnover_pct: 15, avoid_exit_load: true, respect_lock_in: true, prefer_new_cash: rb.use_new_cash_first ?? true, tax_aware: rb.tax_aware ?? true, ltcg_wait_days: 45, settlement_buffer_days: 2 };
+  await c.query("insert into rebalance_programs (family_id, scope, entity_id, goal_id, policy_id, name, calendar_rrule, band_trigger, drift_threshold_pp, milestone_triggers, need_lookahead_days, large_flow_pct, tax_year_end, constraints, auto_draft, auto_convert_low_risk) values ($1,$2::policy_scope,$3,null,$4,$5,$6,$7,$8,'[]',120,5,$9,$10,true,false) on conflict do nothing", [familyId, policy.scope, policy.scope === "entity" ? policy.entity_id : null, policy.id, policy.name, rrule, rb.method !== "calendar", rb.tolerance_pp ? Number(rb.tolerance_pp) * 2 : null, policy.scope === "family", JSON.stringify(constraints)]);
+}
 export async function activateVersion(c: pg.PoolClient, familyId: string, versionId: string, userId: string, effectiveFrom = today()) {
   const cl = await versionClauses(c, versionId); const v = cl.version;
   if (!["in_review", "draft"].includes(v.status)) throw new PolicyError(409, `Cannot activate a ${v.status} version`);
@@ -212,6 +220,7 @@ export async function activateVersion(c: pg.PoolClient, familyId: string, versio
   if (prev) { await c.query("update ips_rules set active=false where policy_version_id=$1", [prev.id]); await c.query("update execution_policies set active=false where policy_version_id=$1", [prev.id]); await c.query("delete from glide_paths where policy_version_id=$1", [prev.id]); }
   for (const r of cl.ips_rules ?? []) await c.query("insert into ips_rules (family_id, entity_id, code, params, severity, active, policy_version_id) values ($1,$2,$3,$4,$5,true,$6)", [familyId, policy.entity_id ?? null, r.code, JSON.stringify(r.params ?? {}), r.severity ?? 2, versionId]);
   for (const g of (cl.guardrails?.execution_policies ?? []) as any[]) await c.query("insert into execution_policies (family_id, entity_id, intent_kind, code, params, active, created_by, policy_version_id) values ($1,$2,$3::intent_kind,$4,$5,true,$6,$7)", [familyId, policy.entity_id ?? null, g.intent_kind ?? null, g.code, JSON.stringify(g.params ?? {}), userId, versionId]);
+  await ensureProgramFor(c, familyId, { ...policy, current_version_id: versionId });
   if (cl.glide_path?.steps?.length && policy.goal_id) { await c.query("delete from glide_paths where goal_id=$1 and (policy_version_id is null or policy_version_id=$2)", [policy.goal_id, versionId]); await c.query("insert into glide_paths (family_id, goal_id, steps, policy_version_id) values ($1,$2,$3,$4)", [familyId, policy.goal_id, JSON.stringify(cl.glide_path.steps), versionId]); }
   await renderDocument(c, versionId);
   return { previous_version_id: prev?.id ?? null, next_review_on: addMonths(effectiveFrom, months) };
