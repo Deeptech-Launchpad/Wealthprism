@@ -56,6 +56,8 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
   const cash = (await c.query("select entity_id, coalesce(sum(balance),0) v from bank_accounts where deleted_at is null and type in ('savings','current') and entity_id = any($1) group by entity_id", [ids])).rows;
   const incomes = (await c.query("select entity_id, kind, annual_amount, growth_pct from entity_income_sources where entity_id = any($1) and (from_fy is null or from_fy <= $2) and (to_fy is null or to_fy >= $2)", [ids, fy])).rows;
   const deductions = (await c.query("select entity_id, fy, code, amount from entity_deductions where entity_id = any($1) and fy >= $2", [ids, fy])).rows;
+  // household expenses that carry a deduction code count toward this year's deductions (monthly x 12)
+  deductions.push(...(await c.query("select entity_id, $2::text fy, deduction_code code, sum(monthly_amount * 12) amount from household_expenses where entity_id = any($1) and deleted_at is null and deduction_code is not null group by entity_id, deduction_code", [ids, fy])).rows);
   const advance = (await c.query("select entity_id, fy, paid_on, amount from advance_tax_payments where entity_id = any($1) and fy >= $2", [ids, fy])).rows;
   const tds = (await c.query("select entity_id, fy, coalesce(sum(tds_deducted),0) v from tds_26as where entity_id = any($1) and fy >= $2 group by entity_id, fy", [ids, fy])).rows;
   // fd/rd interest falling in this financial year is "income from other sources"; the TDS banks already cut from received interest is a credit against it
@@ -78,6 +80,15 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
       from goals g where g.status='active'`)).rows;
   const t = (await c.query("select liquidity_pct, income_pct, growth_pct, drift_threshold_pp from bucket_targets where entity_id is null order by effective_from desc limit 1")).rows[0] ?? { liquidity_pct: 8, income_pct: 32, growth_pct: 60, drift_threshold_pp: 1.5 };
   const commitments = (await c.query("select entity_id, due_date, amount, label from committed_outflows where status='pending' and due_date >= $1 and (entity_id is null or entity_id = any($2))", [asOf, ids])).rows;
+  // household expenses: one line per month for five years, on the 1st, growing each year
+  const hhRows = (await c.query("select entity_id, category, label, monthly_amount, growth_pct, to_char(from_month,'YYYY-MM-DD') from_month, to_char(to_month,'YYYY-MM-DD') to_month from household_expenses where deleted_at is null and entity_id = any($1)", [ids])).rows;
+  const household: { entityId: string; date: string; amount: number; label: string }[] = [];
+  const [ay, am] = asOf.split("-").map(Number);
+  for (const h of hhRows) for (let m = 0; m < 60; m++) {
+    const y = ay + Math.floor((am - 1 + m) / 12), mo = ((am - 1 + m) % 12) + 1; const date = `${y}-${String(mo).padStart(2, "0")}-01`;
+    if (date < asOf) continue; if (h.from_month && date < h.from_month) continue; if (h.to_month && date > h.to_month) continue;
+    household.push({ entityId: h.entity_id, date, amount: Math.round(Number(h.monthly_amount) * Math.pow(1 + Number(h.growth_pct) / 100, Math.floor(m / 12)) * 100) / 100, label: `Household · ${h.category} · ${h.label}` });
+  }
   const liabilities = (await c.query("select entity_id, outstanding, rate_pct, tax_section, emi from liabilities where status='active' and deleted_at is null and entity_id = any($1)", [ids])).rows;
   // holdings whose goal links use the holding's own goal_id column count too
   const goalHoldings = (await c.query("select id, goal_id from holdings where goal_id is not null and entity_id = any($1)", [ids])).rows;
@@ -96,7 +107,7 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
     realised: realised.map((r) => ({ entityId: r.entity_id, fy: r.fy, assetClass: r.asset_class, term: r.term, amount: Number(r.gain), sellDate: iso(r.sell_date)! })),
     goals: goals.map((g) => ({ id: g.id, name: g.name, targetYear: Number(g.target_year), amountToday: Number(g.amount_today), inflationPct: Number(g.inflation_pct), bucket: g.bucket, linkedHoldingIds: [...(g.hids as string[]), ...goalHoldings.filter((h) => h.goal_id === g.id).map((h) => h.id)], linkedPropertyIds: g.pids, linkedPrivateIds: g.vids })),
     targets: { liquidity: Number(t.liquidity_pct), income: Number(t.income_pct), growth: Number(t.growth_pct), driftThresholdPp: Number(t.drift_threshold_pp) },
-    commitments: commitments.map((x) => ({ entityId: x.entity_id, date: iso(x.due_date)!, amount: Number(x.amount), label: x.label })),
+    commitments: [...commitments.map((x) => ({ entityId: x.entity_id, date: iso(x.due_date)!, amount: Number(x.amount), label: x.label })), ...household],
     liabilities: (liabilities as any[]).map((l) => ({ entityId: l.entity_id, outstanding: Number(l.outstanding), ratePct: Number(l.rate_pct ?? 0), section: l.tax_section, emi: l.emi == null ? null : Number(l.emi) })),
   };
 }
