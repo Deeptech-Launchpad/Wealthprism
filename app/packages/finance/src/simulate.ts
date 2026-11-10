@@ -47,6 +47,12 @@ const fyStartOf = (fy: string) => `${fy.slice(0, 4)}-04-01`, fyEndOf = (fy: stri
 const nextFy = (fy: string) => { const y = Number(fy.slice(0, 4)) + 1; return `${y}-${String(y + 1).slice(-2)}`; };
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
 
+/** Financial years the projection must cover: the requested horizon, stretched to include the year of the latest action, so a sale in FY 2029-30 is taxed and counted. */
+export function horizonSpan(asOf: string, horizon: number, actionDates: string[]): number {
+  const baseFy = fyOf(asOf); const latest = actionDates.filter(Boolean).sort().pop(); if (!latest) return horizon;
+  const target = fyOf(latest); let f = baseFy, n = 1; while (f !== target && n < 60) { f = nextFy(f); n++; }
+  return Math.max(horizon, n);
+}
 export function simulate(input: SimState, actionsIn: SimAction[], a: Assumptions, tables: TablesProvider, opts: { horizonFys?: number; cii?: Record<string, number>; baselineGoals?: Record<string, number>; baselineTax?: number } = {}): SimResult {
   const s = clone(input);
   const horizon = opts.horizonFys ?? 3;

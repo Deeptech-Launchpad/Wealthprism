@@ -1,7 +1,7 @@
 /** Planning glue: build a SimState from the family's tables, provide tax tables from the tax_* data, run the engine
  *  and persist results. Routes and jobs call these; the engine itself lives in @fo/finance. */
 import type pg from "pg";
-import { simulate, fyOf, type SimState, type SimAction, type Assumptions, type TablesProvider, type TaxTables, type SimResult, ENGINE_VERSION } from "@fo/finance";
+import { simulate, horizonSpan, fyOf, type SimState, type SimAction, type Assumptions, type TablesProvider, type TaxTables, type SimResult, ENGINE_VERSION } from "@fo/finance";
 
 export const DEFAULT_ASSUMPTIONS: Assumptions = { returns: { liquidity: 6.5, income: 8, growth: 12 }, inflation: 6 };
 const iso = (d: any) => (d ? new Date(d).toISOString().slice(0, 10) : null);
@@ -112,13 +112,15 @@ export async function runScenario(c: pg.PoolClient, familyId: string, scenarioId
   const state = await loadState(c, asOf, sc.entity_scope);
   const assumptions: Assumptions = { ...DEFAULT_ASSUMPTIONS, ...(sc.assumptions ?? {}), ...(opts.assumptionsOverride ?? {}), returns: { ...DEFAULT_ASSUMPTIONS.returns, ...(sc.assumptions?.returns ?? {}), ...(opts.assumptionsOverride?.returns ?? {}) } };
   const horizon = Number(sc.horizon_fys ?? 3);
+  const actions = (await c.query("select * from plan_actions where scenario_id=$1 order by seq", [scenarioId])).rows.map(toSimAction);
+  // the projection covers the actions' years too, and the baseline uses the same length so the comparison is fair
+  const span = horizonSpan(asOf, horizon, actions.map((a) => a.plannedDate));
   let baselineTax: number | undefined, baselineGoals: Record<string, number> | undefined;
   if (!sc.is_baseline) {
-    const base = simulate(state, [], { ...assumptions, regime: undefined }, tables, { horizonFys: horizon, cii });
+    const base = simulate(state, [], { ...assumptions, regime: undefined }, tables, { horizonFys: span, cii });
     baselineTax = base.summary.tax_total; baselineGoals = Object.fromEntries(base.goals_after.map((g) => [g.goal_id, g.funded_pct]));
   }
-  const actions = (await c.query("select * from plan_actions where scenario_id=$1 order by seq", [scenarioId])).rows.map(toSimAction);
-  const result = simulate(state, actions, assumptions, tables, { horizonFys: horizon, cii, baselineTax, baselineGoals });
+  const result = simulate(state, actions, assumptions, tables, { horizonFys: span, cii, baselineTax, baselineGoals });
   const computedAt = new Date().toISOString();
   if (opts.persist !== false) {
     await c.query("insert into plan_results (family_id, scenario_id, engine_version, summary, by_fy, allocation_after, goals_after, cash_ladder, warnings) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
