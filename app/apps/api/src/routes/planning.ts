@@ -180,6 +180,8 @@ export default async function routes(app: FastifyInstance) {
     const r = await c.query("delete from plan_actions where id=$1 and scenario_id=$2", [actionId, id]);
     if (!r.rowCount) return void reply.code(404).send({ title: "Action not found", status: 404 });
     await c.query("update plan_scenarios set version=version+1 where id=$1", [id]);
+    // re-run the projection so the cards never show the old result
+    try { await runScenario(c, fam(req), id, { persist: true }); } catch { await c.query("update plan_scenarios set results=null where id=$1", [id]).catch(() => null); }
     return void reply.code(204).send();
   }));
 

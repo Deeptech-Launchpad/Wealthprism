@@ -78,7 +78,7 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
       from goals g where g.status='active'`)).rows;
   const t = (await c.query("select liquidity_pct, income_pct, growth_pct, drift_threshold_pp from bucket_targets where entity_id is null order by effective_from desc limit 1")).rows[0] ?? { liquidity_pct: 8, income_pct: 32, growth_pct: 60, drift_threshold_pp: 1.5 };
   const commitments = (await c.query("select entity_id, due_date, amount, label from committed_outflows where status='pending' and due_date >= $1 and (entity_id is null or entity_id = any($2))", [asOf, ids])).rows;
-  const liabilities = (await c.query("select entity_id, outstanding, rate_pct, tax_section from liabilities where status='active' and deleted_at is null and entity_id = any($1)", [ids])).rows;
+  const liabilities = (await c.query("select entity_id, outstanding, rate_pct, tax_section, emi from liabilities where status='active' and deleted_at is null and entity_id = any($1)", [ids])).rows;
   // holdings whose goal links use the holding's own goal_id column count too
   const goalHoldings = (await c.query("select id, goal_id from holdings where goal_id is not null and entity_id = any($1)", [ids])).rows;
   return {
@@ -97,7 +97,7 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
     goals: goals.map((g) => ({ id: g.id, name: g.name, targetYear: Number(g.target_year), amountToday: Number(g.amount_today), inflationPct: Number(g.inflation_pct), bucket: g.bucket, linkedHoldingIds: [...(g.hids as string[]), ...goalHoldings.filter((h) => h.goal_id === g.id).map((h) => h.id)], linkedPropertyIds: g.pids, linkedPrivateIds: g.vids })),
     targets: { liquidity: Number(t.liquidity_pct), income: Number(t.income_pct), growth: Number(t.growth_pct), driftThresholdPp: Number(t.drift_threshold_pp) },
     commitments: commitments.map((x) => ({ entityId: x.entity_id, date: iso(x.due_date)!, amount: Number(x.amount), label: x.label })),
-    liabilities: (liabilities as any[]).map((l) => ({ entityId: l.entity_id, outstanding: Number(l.outstanding), ratePct: Number(l.rate_pct ?? 0), section: l.tax_section })),
+    liabilities: (liabilities as any[]).map((l) => ({ entityId: l.entity_id, outstanding: Number(l.outstanding), ratePct: Number(l.rate_pct ?? 0), section: l.tax_section, emi: l.emi == null ? null : Number(l.emi) })),
   };
 }
 

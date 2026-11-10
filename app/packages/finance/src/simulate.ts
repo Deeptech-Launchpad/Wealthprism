@@ -23,7 +23,7 @@ export interface SimState {
   realised: { entityId: string; fy: string; assetClass: string; term: "short" | "long"; amount: number; sellDate: string }[];
   goals: SimGoal[]; targets: { liquidity: number; income: number; growth: number; driftThresholdPp: number };
   commitments: { entityId: string | null; date: string; amount: number; label: string }[];
-  liabilities: { entityId: string; outstanding: number; ratePct: number; section: string | null }[];
+  liabilities: { entityId: string; outstanding: number; ratePct: number; section: string | null; emi?: number | null }[];
 }
 export interface SimAction { id: string; seq: number; kind: string; entityId?: string | null; targetType?: string | null; targetId?: string | null; params: Record<string, any>; plannedDate: string; plannedAmount?: number | null }
 export interface Assumptions { returns: { liquidity: number; income: number; growth: number }; inflation: number; regime?: Record<string, "old" | "new">; price_growth?: Record<string, number> }
@@ -42,6 +42,8 @@ export interface SimResult {
 const r2 = (n: number) => Math.round(n * 100) / 100 + 0;
 const addMonths = (d: string, m: number) => { const x = new Date(d + "T00:00:00Z"); x.setUTCMonth(x.getUTCMonth() + m); return x.toISOString().slice(0, 10); };
 const months = (a: string, b: string) => { const [ay, am, ad] = a.split("-").map(Number), [by, bm, bd] = b.split("-").map(Number); let m = (by - ay) * 12 + (bm - am); if (bd < ad) m--; return m; };
+/** Balance left on a loan after n months of EMIs: interest accrues monthly and the EMI is paid each month. With no EMI on file the balance is kept as it is. */
+const loanAfter = (outstanding: number, ratePct: number, emi: number | null | undefined, n: number) => { if (!emi || emi <= 0) return Math.max(0, outstanding); const r = ratePct / 1200; let b = outstanding; for (let k = 0; k < n && b > 0.005; k++) b = b * (1 + r) - emi; return Math.max(0, r2(b)); };
 const yearsBetween = (a: string, b: string) => (Date.parse(b) - Date.parse(a)) / (365.25 * 86400000);
 const fyStartOf = (fy: string) => `${fy.slice(0, 4)}-04-01`, fyEndOf = (fy: string) => `${Number(fy.slice(0, 4)) + 1}-03-31`;
 const nextFy = (fy: string) => { const y = Number(fy.slice(0, 4)) + 1; return `${y}-${String(y + 1).slice(-2)}`; };
@@ -286,10 +288,13 @@ export function simulate(input: SimState, actionsIn: SimAction[], a: Assumptions
     + (bucket === "liquidity" ? Object.values(s.cash).reduce((t, c) => t + Math.max(0, c), 0) * growthTo("liquidity", endDate) - taxDue.reduce((t, d) => t + d.amount, 0) : 0);
   const buckets: Bucket[] = ["liquidity", "income", "growth"];
   const vals = Object.fromEntries(buckets.map((b) => [b, Math.max(0, value(b))])) as Record<Bucket, number>;
-  const total = buckets.reduce((t, b) => t + vals[b], 0);
-  const allocation = buckets.map((b) => { const pct = total ? r2((vals[b] / total) * 100) : 0; const drift = r2(pct - s.targets[b]); return { bucket: b, value: r2(vals[b]), pct, target_pct: s.targets[b], drift_pp: drift, breached: Math.abs(drift) > s.targets.driftThresholdPp }; });
+  // the loans still owed at the end of the horizon come off the assets: net worth = assets - debts
+  const loansEnd = s.liabilities.reduce((t, l) => t + loanAfter(l.outstanding, l.ratePct, l.emi, months(s.asOf, endDate)), 0);
+  const gross = buckets.reduce((t, b) => t + vals[b], 0); const total = gross - loansEnd;
+  const allocation = buckets.map((b) => { const pct = gross ? r2((vals[b] / gross) * 100) : 0; const drift = r2(pct - s.targets[b]); return { bucket: b, value: r2(vals[b]), pct, target_pct: s.targets[b], drift_pp: drift, breached: Math.abs(drift) > s.targets.driftThresholdPp }; });
   const driftMax = Math.max(0, ...allocation.map((x) => Math.abs(x.drift_pp)));
-  const startValue = (() => { const hv = s.holdings.reduce((t, h) => t + h.lots.reduce((q, l) => q + l.remainingQty, 0) * h.price, 0); return r2(hv + input.properties.reduce((t, p) => t + p.value * p.ownershipPct / 100, 0) + input.privates.reduce((t, p) => t + p.mark, 0) + Object.values(input.cash).reduce((t, c) => t + c, 0)); })();
+  const startGross = (() => { const hv = s.holdings.reduce((t, h) => t + h.lots.reduce((q, l) => q + l.remainingQty, 0) * h.price, 0); return r2(hv + input.properties.reduce((t, p) => t + p.value * p.ownershipPct / 100, 0) + input.privates.reduce((t, p) => t + p.mark, 0) + Object.values(input.cash).reduce((t, c) => t + c, 0)); })();
+  const startValue = r2(startGross - input.liabilities.reduce((t, l) => t + l.outstanding, 0)); // today's net worth: assets less loans, the same basis as the end figure
 
   // ---- goals ----
   const yearNow = Number(s.asOf.slice(0, 4));
