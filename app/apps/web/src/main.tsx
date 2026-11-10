@@ -19,6 +19,7 @@ import { WorkingCapital } from "./pages/WorkingCapital";
 import { ActionPlane } from "./pages/ActionPlane";
 import { Books } from "./pages/Books";
 import { Planning } from "./pages/Planning";
+import { IncomeExpenses } from "./pages/IncomeExpenses";
 import { Policy } from "./pages/Policy";
 import { Rebalancing } from "./pages/Rebalancing";
 import { Research } from "./pages/Research";
@@ -56,6 +57,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="action-plane" element={<ActionPlane />} />
           <Route path="books" element={<Books />} />
           <Route path="planning" element={<Planning />} />
+          <Route path="income-expenses" element={<IncomeExpenses />} />
           <Route path="policy" element={<Policy />} />
           <Route path="rebalancing" element={<Rebalancing />} />
           <Route path="research" element={<Research />} />

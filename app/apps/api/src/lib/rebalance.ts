@@ -47,7 +47,9 @@ export async function floatFor(c: pg.PoolClient, familyId: string, day = today()
   const cash = accounts.reduce((x, a) => x + Number(a.balance), 0);
   const outflows = (await c.query("select due_date, amount from committed_outflows where family_id=$1 and status='pending' and due_date >= $2", [familyId, day])).rows.map((o) => ({ dueDate: iso(o.due_date)!, amount: Number(o.amount) }));
   const avg = Number((await c.query("select coalesce(avg(m),0) v from (select date_trunc('month', txn_date) mo, sum(-amount) m from bank_txns where family_id=$1 and amount < 0 and txn_date >= $2::date - 180 group by 1) x", [familyId, day])).rows[0].v);
-  return { cash: r2(cash), floatRequired: requiredFloat({ cash, outflows, floatDays: Number(s.float_days), avgMonthlyOutflow: avg, bufferMonths: Number(s.buffer_months), asOf: day }), accounts: accounts.map((a) => ({ accountId: a.id, entityId: a.entity_id, balance: Number(a.balance) })) };
+  // household expenses entered on the Income & expenses page are part of the monthly spend the float must cover
+  const hhMonthly = Number((await c.query("select coalesce(sum(monthly_amount),0) v from household_expenses where family_id=$1 and deleted_at is null", [familyId])).rows[0].v);
+  return { cash: r2(cash), floatRequired: requiredFloat({ cash, outflows, floatDays: Number(s.float_days), avgMonthlyOutflow: avg + hhMonthly, bufferMonths: Number(s.buffer_months), asOf: day }), accounts: accounts.map((a) => ({ accountId: a.id, entityId: a.entity_id, balance: Number(a.balance) })) };
 }
 /** Coverage view for a need: recorded coverage rows plus cash available today. */
 export async function needsView(c: pg.PoolClient, familyId: string, opts: { entityId?: string | null; days?: number; status?: string | null; day?: string } = {}) {
