@@ -122,7 +122,13 @@ export async function ladder(c: pg.PoolClient, familyId: string, entityId?: stri
   // FDs and RDs added in the Deposits tab live in their own table, so they are read here too — otherwise money already sitting in a deposit looks undeployed
   const dv = await activeDepositValues(c, familyId, entityId);
   const meta = new Map((await c.query("select d.id, d.rate_pct, e.name entity from deposits d join entities e on e.id=d.entity_id where d.family_id=$1", [familyId])).rows.map((r) => [r.id, r]));
-  const deps = dv.map((d) => { const m: any = meta.get(d.id); const gross = Number(m?.rate_pct ?? s.instrument_prefs.yields.bank_fd); return { holding_id: d.id, entity: m?.entity ?? "", instrument: `${d.bank} ${d.kind.toUpperCase()}${d.account_no ? " " + d.account_no : ""}`, kind: "bank_fd" as LineKind, horizon: HORIZON.bank_fd, deployed: money(d.value), gross_yield_pct: r2(gross), tax_treatment: TREATMENT.bank_fd, post_tax_yield_pct: r2(postTaxYield(gross, TREATMENT.bank_fd, slab)), real_yield_pct: r2(postTaxYield(gross, TREATMENT.bank_fd, slab) - infl) }; }).filter((d) => Number(d.deployed) > 0);
+  // government savings (PPF, EPF, Sukanya) are read from their own accounts: rate, maturity date, and interest that is tax-free
+  const savMeta = new Map((await c.query("select id, rate_pct, matures_on::text matures_on from savings_accounts where family_id=$1", [familyId])).rows.map((r) => [r.id, r]));
+  const deps = dv.map((d) => { const m: any = meta.get(d.id); const sv: any = savMeta.get(d.id); const govt = /^(ppf|epf|ssy)$/i.test(String(d.kind));
+    const gross = Number(m?.rate_pct ?? sv?.rate_pct ?? s.instrument_prefs.yields.bank_fd); const treatment = govt ? "exempt" as const : TREATMENT.bank_fd;
+    const horizon = govt && sv?.matures_on ? `${Math.max(0, Math.round((Date.parse(sv.matures_on) - Date.now()) / (365.25 * 86400000)))} years to maturity` : HORIZON.bank_fd;
+    const post = postTaxYield(gross, treatment, slab);
+    return { holding_id: d.id, entity: m?.entity ?? "", instrument: `${d.bank} ${d.kind.toUpperCase()}${d.account_no ? " " + d.account_no : ""}`, kind: "bank_fd" as LineKind, horizon, deployed: money(d.value), gross_yield_pct: r2(gross), tax_treatment: treatment, post_tax_yield_pct: r2(post), real_yield_pct: r2(post - infl) }; }).filter((d) => Number(d.deployed) > 0);
   const out = [...held, ...deps];
   const total = out.reduce((s, x) => s + Number(x.deployed), 0);
   return { inflation_pct: infl, rows: out, total: money(total), blended_real_yield_pct: total ? r2(out.reduce((s, x) => s + Number(x.deployed) * x.real_yield_pct, 0) / total) : 0, blended_post_tax_yield_pct: total ? r2(out.reduce((s, x) => s + Number(x.deployed) * x.post_tax_yield_pct, 0) / total) : 0, by_horizon: Object.entries(out.reduce((m, x) => { m[x.horizon] = (m[x.horizon] ?? 0) + Number(x.deployed); return m; }, {} as Record<string, number>)).map(([horizon, v]) => ({ horizon, deployed: money(v) })) };
