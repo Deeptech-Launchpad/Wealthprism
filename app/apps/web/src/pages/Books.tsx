@@ -79,7 +79,7 @@ function Journals({ ctx, book }: { ctx: Ctx; book: any }) {
   const act = useAction(() => { jn.refetch(); ctx.refetchBooks(); });
   const me = session.get()?.user.id; const leaf = ctx.accounts.filter((a) => !a.is_group && a.active);
   const setLine = (i: number, k: string, v: string) => setF({ ...f, lines: f.lines.map((l: any, j: number) => (j === i ? { ...l, [k]: v } : l)) });
-  const d = f.lines.reduce((s: number, l: any) => s + Number(l.debit || 0), 0), c = f.lines.reduce((s: number, l: any) => s + Number(l.credit || 0), 0);
+  const d = (f.lines ?? []).reduce((s: number, l: any) => s + Number(l.debit || 0), 0), c = (f.lines ?? []).reduce((s: number, l: any) => s + Number(l.credit || 0), 0);
   if (!jn.data) return <Status loading={jn.loading} error={jn.error} />;
   return (<div className="grid-2" style={{ alignItems: "start" }}>
     <Card title="Day book" action={<div className="row gap"><select style={inp} value={src} onChange={(e) => setSrc(e.target.value)}><option value="">all sources</option>{["auto", "manual", "recurring", "opening", "closing", "reversal", "tally_import"].map((s) => <option key={s}>{s}</option>)}</select><select style={inp} value={status} onChange={(e) => setStatus(e.target.value)}><option value="">any status</option>{["posted", "draft", "reversed"].map((s) => <option key={s}>{s}</option>)}</select><button className="btn btn-p" onClick={() => { setCreating(true); setOpen(null); }}><Plus size={14} /> Manual journal</button></div>}>
@@ -87,7 +87,7 @@ function Journals({ ctx, book }: { ctx: Ctx; book: any }) {
       {jn.data.items.length === 0 && <div className="small mute">No journals yet — post the opening balances and pending events from the Trial balance tab.</div>}
       {jn.data.items.map((j: any) => <div key={j.id} className="attn" style={{ cursor: "pointer", background: open?.id === j.id ? "#F6F8FB" : undefined }} onClick={() => { setOpen(j); setCreating(false); }}>
         <span style={{ flex: 1 }}><b>#{j.journal_no}</b> · {j.narration}<div className="small mute">{fmtDate(j.entry_date)} · source: {j.source_type ?? j.source}{j.posted_by_name ? ` · ${j.posted_by_name}` : ""}</div></span>
-        <span className="num">{inr(j.lines.reduce((s: number, l: any) => s + Number(l.debit), 0))}</span><Pill tone={tone(j.status)}>{j.status}</Pill></div>)}
+        <span className="num">{inr((j.lines ?? []).reduce((s: number, l: any) => s + Number(l.debit), 0))}</span><Pill tone={tone(j.status)}>{j.status}</Pill></div>)}
     </Card>
     {creating && <Card title="Manual journal" action={<span className="small mute">{book?.maker_checker ? "lands as a draft for a second person" : "posts immediately"}</span>}>
       <div className="row gap" style={{ flexWrap: "wrap", alignItems: "flex-end" }}><Field label="Date"><input type="date" style={inp} value={f.entry_date} onChange={(e) => setF({ ...f, entry_date: e.target.value })} /></Field><Field label="Narration"><input style={{ ...inp, minWidth: 260 }} value={f.narration} onChange={(e) => setF({ ...f, narration: e.target.value })} /></Field></div>
