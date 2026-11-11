@@ -47,6 +47,7 @@ function Picker({ list, selectedId, onSelect, filter }: { list: any[]; selectedI
 function Policies({ list, selectedId, onSelect, onChange, onDraft, onOpen }: { list: any[]; selectedId: string | null; onSelect: (id: string) => void; onChange: () => void; onDraft: (id: string, vid: string) => void; onOpen: (id: string, t: (typeof TABS)[number]) => void }) {
   const d = useApi<any>(selectedId ? `/policies/${selectedId}` : null); const [err, setErr] = useState(""); const [busy, setBusy] = useState("");
   const [creating, setCreating] = useState(false);
+  const comp = useApi<any>(selectedId && list.find((x) => x.id === selectedId)?.current_version ? `/policies/${selectedId}/compliance` : null);
   const amend = async () => { if (!selectedId) return; setBusy("amend"); setErr(""); try { const p = list.find((x) => x.id === selectedId) ?? d.data; if (p?.open_draft) return onDraft(selectedId, p.open_draft.id); const v = await api<any>(`/policies/${selectedId}/versions`, { method: "POST", body: JSON.stringify({ change_summary: "Amendment" }) }); onDraft(selectedId, v.id); } catch (e: any) { setErr(e.message); } finally { setBusy(""); } };
   const evaluate = async () => { if (!selectedId) return; setBusy("eval"); setErr(""); try { await api(`/policies/${selectedId}/compliance`, { method: "POST", body: "{}" }); onChange(); } catch (e: any) { setErr(e.message); } finally { setBusy(""); } };
   const p = d.data; const items: any[] = (p?.effective?.items ?? []).filter((i: any) => !/_id$/.test(i.key)); // ids are plumbing, not clauses
@@ -61,6 +62,15 @@ function Policies({ list, selectedId, onSelect, onChange, onDraft, onOpen }: { l
         </div>)}
         <div className="small mute" style={{ marginTop: 10 }}>Entity and goal policies inherit the family policy and override only what differs. Editing any target, band, rule or guardrail elsewhere creates a policy amendment.</div>
       </Card>
+      {p && <Card title={`Current breaches (${(comp.data?.checks ?? []).filter((c: any) => c.status === "breach").length})`} action={<span className="small mute">each item compared with the active targets and limits</span>}>
+        {(() => { const br = (comp.data?.checks ?? []).filter((c: any) => c.status === "breach"); const n = (k: string) => br.filter((c: any) => c.kind === k).length;
+          return br.length ? <>
+            <table className="tbl"><thead><tr><th>Section</th><th>Clause</th><th>Target or limit</th><th className="num">Current</th><th>Gap</th></tr></thead><tbody>
+              {br.map((c: any, i: number) => <tr key={i}><td>{c.kind === "risk_limit" ? "risk" : c.kind === "ips_rule" ? "IPS rule" : c.kind}</td><td>{String(c.key).replace("asset_class:", "")}</td><td>{c.target}</td><td className="num">{c.actual}</td><td className="small mute">{c.detail || "—"}</td></tr>)}
+            </tbody></table>
+            <div className="small mute" style={{ marginTop: 8 }}>{br.length} breaches: {n("allocation")} allocation · {n("risk_limit")} risk limits · {n("liquidity")} liquidity · {n("permitted")} permitted · {n("ips_rule")} IPS rules</div>
+          </> : <div className="small mute">No breaches against the active policy.</div>; })()}
+      </Card>}
       {!p ? <Status loading={d.loading} error={d.error} /> : <Card title={`${p.name} — effective clauses${p.current_version ? ` (v${p.current_version.version})` : ""}`} action={<div className="row gap"><button className="btn btn-s" disabled={!!busy} onClick={amend}><GitBranch size={14} /> {p.open_draft ? `Open draft v${p.open_draft.version}` : "Amend (new draft)"}</button><button className="btn btn-s" onClick={() => onOpen(p.id, "Document")}><ScrollText size={14} /> IPS document</button><button className="btn btn-s" disabled={!!busy || !p.current_version} onClick={evaluate}><RefreshCw size={14} /> Evaluate now</button></div>}>
         <div className="row gap small mute" style={{ marginBottom: 8, flexWrap: "wrap" }}><span>Effective {fmtDate(p.current_version?.effective_from ?? null)}</span><span>·</span><span>Next review {fmtDate(p.next_review_on)} (every {p.review_every_months} months)</span><span>·</span><span>Signed: {(p.current_version?.signed_by ?? []).map((s: any) => s.name).join(", ") || "—"}</span>{p.compliance && <><span>·</span><span>Compliance {fmtDate(p.compliance.as_of)}: <Pill tone={tone(p.compliance.overall)}>{p.compliance.overall}</Pill> {p.compliance.breaches} breach · {p.compliance.warnings} warning</span></>}</div>
         {p.description && <div className="small" style={{ marginBottom: 8 }}>{p.description}</div>}
