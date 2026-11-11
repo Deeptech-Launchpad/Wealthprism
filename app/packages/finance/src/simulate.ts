@@ -280,12 +280,28 @@ export function simulate(input: SimState, actionsIn: SimAction[], a: Assumptions
     }
   }
 
-  // ---- roll forward to the horizon end and value everything ----
   const endDate = fyEndOf(lastFy);
+  // ---- monthly cash ladder ----
+  const ladder: SimResult["cash_ladder"] = [];
+  let cash = Object.values(input.cash).reduce((t, c) => t + c, 0);
+  const monthlyIncome = s.incomes.reduce((t, i) => t + i.annual, 0) / 12;
+  for (let m = s.asOf.slice(0, 7) + "-01", i = 0; m <= endDate && i < 60; m = addMonths(m, 1), i++) {
+    const mEnd = addMonths(m, 1);
+    const rent = s.properties.filter((p) => !p.selfOccupied && (!p.rentEndDate || p.rentEndDate >= m)).reduce((t, p) => t + (p.annualRentGross / 12) * p.ownershipPct / 100, 0);
+    const committed = s.commitments.filter((c) => c.date >= m && c.date < mEnd).reduce((t, c) => t + c.amount, 0);
+    const taxes = taxDue.filter((d) => { const q = [`${d.fy.slice(0, 4)}-06`, `${d.fy.slice(0, 4)}-09`, `${d.fy.slice(0, 4)}-12`, `${Number(d.fy.slice(0, 4)) + 1}-03`]; return q.includes(m.slice(0, 7)); }).reduce((t, d) => t + d.amount / 4, 0);
+    const events = cashEvents.filter((ev) => ev.date >= m && ev.date < mEnd).reduce((t, ev) => t + ev.amount, 0);
+    cash = cash + rent + monthlyIncome - committed - taxes + events;
+    const next60 = s.commitments.filter((c) => c.date >= mEnd && c.date < addMonths(mEnd, 2)).reduce((t, c) => t + c.amount, 0);
+    ladder.push({ month: m.slice(0, 7), cash: r2(cash), committed: r2(committed + taxes), excess: r2(cash - next60) });
+    if (cash < 0 && !warnings.some((w) => w.startsWith("Cash goes negative"))) warnings.push(`Cash goes negative in ${m.slice(0, 7)} (₹${r2(cash).toLocaleString("en-IN")}) — sequence sales before purchases or draw the liquidity bucket`);
+  }
+  const closingCash = ladder.length ? ladder[ladder.length - 1].cash : cash;
+  // ---- roll forward to the horizon end and value everything ----
   const value = (bucket: Bucket) => s.holdings.filter((h) => h.bucket === bucket).reduce((t, h) => t + h.lots.reduce((q, l) => q + l.remainingQty, 0) * priceAt(h, endDate), 0)
     + (bucket === "income" ? s.properties.filter((p) => !p.selfOccupied && !p.soldOn).reduce((t, p) => t + p.value * p.ownershipPct / 100 * Math.pow(1 + (a.price_growth?.[p.id] ?? 0) / 100, yearsBetween(s.asOf, endDate)), 0) : 0)
     + (bucket === "growth" ? s.privates.reduce((t, p) => t + p.mark, 0) : 0)
-    + (bucket === "liquidity" ? Object.values(s.cash).reduce((t, c) => t + Math.max(0, c), 0) * growthTo("liquidity", endDate) - taxDue.reduce((t, d) => t + d.amount, 0) : 0);
+    + (bucket === "liquidity" ? closingCash + Object.values(input.cash).reduce((t, c) => t + Math.max(0, c), 0) * (growthTo("liquidity", endDate) - 1) : 0)   // cash after every month of income, rent, bills, EMIs and tax, plus the interest on today's cash;
   const buckets: Bucket[] = ["liquidity", "income", "growth"];
   const vals = Object.fromEntries(buckets.map((b) => [b, Math.max(0, value(b))])) as Record<Bucket, number>;
   // the loans still owed at the end of the horizon come off the assets: net worth = assets - debts
@@ -306,22 +322,6 @@ export function simulate(input: SimState, actionsIn: SimAction[], a: Assumptions
     return { goal_id: g.id, name: g.name, funded_pct: funded, delta_pp: opts.baselineGoals && g.id in opts.baselineGoals ? r2(funded - opts.baselineGoals[g.id]) : null };
   });
 
-  // ---- monthly cash ladder ----
-  const ladder: SimResult["cash_ladder"] = [];
-  let cash = Object.values(input.cash).reduce((t, c) => t + c, 0);
-  const monthlyIncome = s.incomes.reduce((t, i) => t + i.annual, 0) / 12;
-  for (let m = s.asOf.slice(0, 7) + "-01", i = 0; m <= endDate && i < 60; m = addMonths(m, 1), i++) {
-    const mEnd = addMonths(m, 1);
-    const rent = s.properties.filter((p) => !p.selfOccupied && (!p.rentEndDate || p.rentEndDate >= m)).reduce((t, p) => t + (p.annualRentGross / 12) * p.ownershipPct / 100, 0);
-    const committed = s.commitments.filter((c) => c.date >= m && c.date < mEnd).reduce((t, c) => t + c.amount, 0);
-    const taxes = taxDue.filter((d) => { const q = [`${d.fy.slice(0, 4)}-06`, `${d.fy.slice(0, 4)}-09`, `${d.fy.slice(0, 4)}-12`, `${Number(d.fy.slice(0, 4)) + 1}-03`]; return q.includes(m.slice(0, 7)); }).reduce((t, d) => t + d.amount / 4, 0);
-    const events = cashEvents.filter((ev) => ev.date >= m && ev.date < mEnd).reduce((t, ev) => t + ev.amount, 0);
-    cash = cash + rent + monthlyIncome - committed - taxes + events;
-    const next60 = s.commitments.filter((c) => c.date >= mEnd && c.date < addMonths(mEnd, 2)).reduce((t, c) => t + c.amount, 0);
-    ladder.push({ month: m.slice(0, 7), cash: r2(cash), committed: r2(committed + taxes), excess: r2(cash - next60) });
-    if (cash < 0 && !warnings.some((w) => w.startsWith("Cash goes negative"))) warnings.push(`Cash goes negative in ${m.slice(0, 7)} (₹${r2(cash).toLocaleString("en-IN")}) — sequence sales before purchases or draw the liquidity bucket`);
-  }
-  const closingCash = ladder.length ? ladder[ladder.length - 1].cash : cash;
   if (driftMax > s.targets.driftThresholdPp) warnings.push(`Bucket drift of ${driftMax} pp after the plan exceeds the ${s.targets.driftThresholdPp} pp threshold`);
 
   return {
