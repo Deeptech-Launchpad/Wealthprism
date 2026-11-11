@@ -259,6 +259,19 @@ export default async function routes(app: FastifyInstance) {
       return rentView((await c.query(`${RENT_SQL} where rs.id=$1`, [id])).rows[0]);
     });
   });
+  /** Undo a receipt recorded by mistake: the rent goes back to due (or overdue if its due date has passed) and the amount received is cleared. */
+  app.post("/rent-schedule/:id/revert", { preHandler: WRITERS }, async (req, reply) => {
+    return withFamily(req.family!.familyId, async (c) => {
+      const id = (req.params as any).id; const fam = req.family!.familyId;
+      const row = (await c.query("select * from rent_schedule where id=$1", [id])).rows[0];
+      if (!row) return void reply.code(404).send({ title: "Not found", status: 404 });
+      if (!(["received", "partial", "waived"] as string[]).includes(row.status)) return void reply.code(409).send({ title: "Only a received, partly received or waived rent can be undone", status: 409 });
+      const status = iso(row.due_date)! < today() ? "overdue" : "due";
+      await c.query("update rent_schedule set received_amount=0, received_on=null, bank_txn_id=null, status=$2 where id=$1", [id, status]);
+      await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, before, after) values ($1,$2,'revert','rent_schedule',$3,$4,$5)", [fam, req.user!.id, id, JSON.stringify({ status: row.status, received_amount: row.received_amount }), JSON.stringify({ status })]);
+      return rentView((await c.query(`${RENT_SQL} where rs.id=$1`, [id])).rows[0]);
+    });
+  });
   /** One-tap reminder: queued for the channel adapter; the tenant's contact is taken from the tenant record. */
   app.post("/rent-schedule/:id/remind", { preHandler: WRITERS }, async (req, reply) => {
     const b = z.object({ channel: z.enum(["email", "whatsapp", "sms"]).default("whatsapp"), template: z.string().default("rent_overdue"), message: z.string().max(1000).optional() }).parse(req.body ?? {});
