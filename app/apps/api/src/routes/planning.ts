@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireFamily, requireRole } from "../lib/auth.js";
 import { withFamily, money } from "../lib/db.js";
+import { cashflowSummary } from "../lib/cashflow.js";
 import { notifyTask } from "../lib/notify.js";
 import { runScenario, ensureBaseline, tablesProvider, loadState, DEFAULT_ASSUMPTIONS } from "../lib/planning.js";
 import { runOptimiser, executionProgress } from "../jobs/planning.js";
@@ -333,13 +334,16 @@ export default async function routes(app: FastifyInstance) {
     income_sources: (await c.query("select s.*, e.name entity_name from entity_income_sources s join entities e on e.id=s.entity_id order by e.name, s.kind")).rows.map((r) => ({ ...r, annual_amount: money(r.annual_amount) })),
     advance_tax: (await c.query("select a.*, e.name entity_name from advance_tax_payments a join entities e on e.id=a.entity_id order by a.paid_on desc")).rows.map((r) => ({ ...r, paid_on: iso(r.paid_on), amount: money(r.amount) })),
     deductions: (await c.query("select d.*, e.name entity_name from entity_deductions d join entities e on e.id=d.entity_id order by d.fy desc, e.name, d.code")).rows.map((r) => ({ ...r, amount: money(r.amount) })),
-    household_expenses: (await c.query("select h.id, h.entity_id, h.category, h.label, h.monthly_amount, h.growth_pct, h.deduction_code, to_char(h.from_month,'YYYY-MM-DD') from_month, to_char(h.to_month,'YYYY-MM-DD') to_month, e.name entity_name from household_expenses h join entities e on e.id=h.entity_id where h.deleted_at is null order by e.name, h.category, h.label")).rows.map((r) => ({ ...r, monthly_amount: money(r.monthly_amount) })),
+    household_expenses: (await c.query("select h.id, h.entity_id, h.category, h.label, h.monthly_amount, h.growth_pct, h.deduction_code, h.frequency, h.linked_type, h.linked_id, to_char(h.once_on,'YYYY-MM-DD') once_on, to_char(h.from_month,'YYYY-MM-DD') from_month, to_char(h.to_month,'YYYY-MM-DD') to_month, e.name entity_name from household_expenses h join entities e on e.id=h.entity_id where h.deleted_at is null order by e.name, h.category, h.label")).rows.map((r) => ({ ...r, monthly_amount: money(r.monthly_amount) })),
   })));
+  // ---------- Income & expenses: the monthly summary card (manual entries plus rent, EMIs, premiums and running costs) ----------
+  app.get("/cashflow/summary", async (req) => withFamily(fam(req), async (c) => cashflowSummary(c, fam(req))));
+
   // ---------- household expenses: a recurring monthly amount; counts as cash out, and as a deduction when it has a code ----------
   app.post("/tax/inputs/household", { preHandler: WRITERS }, async (req, reply) => {
-    const b = z.object({ entity_id: z.string().uuid(), category: z.enum(["housing", "food", "transport", "school", "health", "insurance", "entertainment", "other"]), label: z.string().min(1).max(120), monthly_amount: z.union([z.number(), z.string()]), growth_pct: z.number().min(0).max(30).default(0), from_month: date.optional().nullable(), to_month: date.optional().nullable(), deduction_code: z.string().max(20).optional().nullable() }).parse(req.body);
+    const b = z.object({ entity_id: z.string().uuid(), category: z.enum(["housing", "food", "transport", "school", "health", "insurance", "entertainment", "other"]), label: z.string().min(1).max(120), monthly_amount: z.union([z.number(), z.string()]), growth_pct: z.number().min(0).max(30).default(0), from_month: date.optional().nullable(), to_month: date.optional().nullable(), deduction_code: z.string().max(20).optional().nullable(), frequency: z.enum(["monthly", "yearly", "once"]).default("monthly"), once_on: date.optional().nullable(), linked_type: z.enum(["property", "holding", "lifestyle_asset", "insurance_policy", "savings_account"]).optional().nullable(), linked_id: z.string().uuid().optional().nullable() }).parse(req.body);
     return withFamily(fam(req), async (c) => { if (!(await c.query("select 1 from entities where id=$1 and family_id=$2 and deleted_at is null", [b.entity_id, fam(req)])).rowCount) return void reply.code(404).send({ title: "Entity not found", status: 404 });
-      const r = (await c.query("insert into household_expenses (family_id, entity_id, category, label, monthly_amount, growth_pct, from_month, to_month, deduction_code) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *", [fam(req), b.entity_id, b.category, b.label, Number(b.monthly_amount), b.growth_pct, b.from_month ?? null, b.to_month ?? null, b.deduction_code || null])).rows[0];
+      const r = (await c.query("insert into household_expenses (family_id, entity_id, category, label, monthly_amount, growth_pct, from_month, to_month, deduction_code, frequency, once_on, linked_type, linked_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning *", [fam(req), b.entity_id, b.category, b.label, Number(b.monthly_amount), b.growth_pct, b.from_month ?? null, b.to_month ?? null, b.deduction_code || null, b.frequency, b.frequency === "once" ? (b.once_on ?? null) : null, b.linked_type ?? null, b.linked_id ?? null])).rows[0];
       return void reply.code(201).send({ ...r, monthly_amount: money(r.monthly_amount) }); });
   });
   app.delete("/tax/inputs/household/:id", { preHandler: WRITERS }, async (req, reply) => withFamily(fam(req), async (c) => {
@@ -348,9 +352,16 @@ export default async function routes(app: FastifyInstance) {
     return void reply.code(204).send();
   }));
   app.post("/tax/inputs/income", { preHandler: WRITERS }, async (req, reply) => {
-    const b = z.object({ entity_id: z.string().uuid(), kind: z.enum(["salary", "fees", "business", "interest", "dividend", "other"]), label: z.string().min(1), annual_amount: z.union([z.number(), z.string()]), growth_pct: z.number().default(0), from_fy: z.string().optional(), to_fy: z.string().optional() }).parse(req.body);
-    return withFamily(fam(req), async (c) => void reply.code(201).send((await c.query("insert into entity_income_sources (family_id, entity_id, kind, label, annual_amount, growth_pct, from_fy, to_fy) values ($1,$2,$3,$4,$5,$6,$7,$8) returning *", [fam(req), b.entity_id, b.kind, b.label, Number(b.annual_amount), b.growth_pct, b.from_fy ?? null, b.to_fy ?? null])).rows[0]));
+    const b = z.object({ entity_id: z.string().uuid(), kind: z.enum(["salary", "fees", "business", "interest", "dividend", "other"]), label: z.string().min(1), monthly_amount: z.union([z.number(), z.string()]).optional(), annual_amount: z.union([z.number(), z.string()]).optional(), frequency: z.enum(["monthly", "yearly"]).default("yearly"), linked_type: z.enum(["property", "holding", "lifestyle_asset", "insurance_policy", "savings_account"]).optional().nullable(), linked_id: z.string().uuid().optional().nullable(), growth_pct: z.number().default(0), from_fy: z.string().optional(), to_fy: z.string().optional() }).parse(req.body);
+    const yearly = b.frequency === "monthly" ? Number(b.monthly_amount ?? 0) * 12 : Number(b.annual_amount ?? 0);
+    if (!(yearly > 0)) return void reply.code(422).send({ title: "Enter the amount", status: 422 });
+    return withFamily(fam(req), async (c) => void reply.code(201).send((await c.query("insert into entity_income_sources (family_id, entity_id, kind, label, annual_amount, growth_pct, from_fy, to_fy, frequency, linked_type, linked_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *", [fam(req), b.entity_id, b.kind, b.label, yearly, b.growth_pct, b.from_fy ?? null, b.to_fy ?? null, b.frequency, b.linked_type ?? null, b.linked_id ?? null])).rows[0]));
   });
+  app.delete("/tax/inputs/income/:id", { preHandler: WRITERS }, async (req, reply) => withFamily(fam(req), async (c) => {
+    const r = await c.query("delete from entity_income_sources where id=$1 and family_id=$2", [(req.params as any).id, fam(req)]);
+    if (!r.rowCount) return void reply.code(404).send({ title: "Not found", status: 404 });
+    return void reply.code(204).send();
+  }));
   app.post("/tax/inputs/advance-tax", { preHandler: WRITERS }, async (req, reply) => {
     const b = z.object({ entity_id: z.string().uuid(), fy: z.string().regex(/^\d{4}-\d{2}$/), paid_on: date, amount: z.union([z.number(), z.string()]), challan: z.string().optional(), bank_txn_id: z.string().uuid().optional() }).parse(req.body);
     return withFamily(fam(req), async (c) => void reply.code(201).send((await c.query("insert into advance_tax_payments (family_id, entity_id, fy, paid_on, amount, challan, bank_txn_id) values ($1,$2,$3,$4,$5,$6,$7) returning *", [fam(req), b.entity_id, b.fy, b.paid_on, Number(b.amount), b.challan ?? null, b.bank_txn_id ?? null])).rows[0]));
