@@ -57,7 +57,7 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
   const incomes = (await c.query("select entity_id, kind, annual_amount, growth_pct from entity_income_sources where entity_id = any($1) and (from_fy is null or from_fy <= $2) and (to_fy is null or to_fy >= $2)", [ids, fy])).rows;
   const deductions = (await c.query("select entity_id, fy, code, amount from entity_deductions where entity_id = any($1) and fy >= $2", [ids, fy])).rows;
   // household expenses that carry a deduction code count toward this year's deductions (monthly x 12)
-  deductions.push(...(await c.query("select entity_id, $2::text fy, deduction_code code, sum(case when frequency='monthly' then monthly_amount * 12 when frequency='yearly' then monthly_amount else 0 end) amount from household_expenses where entity_id = any($1) and deleted_at is null and deduction_code is not null group by entity_id, deduction_code", [ids, fy])).rows);
+  deductions.push(...(await c.query("select entity_id, $2::text fy, deduction_code code, sum(case when frequency='monthly' then monthly_amount * 12 when frequency='quarterly' then monthly_amount * 4 when frequency='half_yearly' then monthly_amount * 2 when frequency='yearly' then monthly_amount else 0 end) amount from household_expenses where entity_id = any($1) and deleted_at is null and deduction_code is not null group by entity_id, deduction_code", [ids, fy])).rows);
   const advance = (await c.query("select entity_id, fy, paid_on, amount from advance_tax_payments where entity_id = any($1) and fy >= $2", [ids, fy])).rows;
   const tds = (await c.query("select entity_id, fy, coalesce(sum(tds_deducted),0) v from tds_26as where entity_id = any($1) and fy >= $2 group by entity_id, fy", [ids, fy])).rows;
   // fd/rd interest falling in this financial year is "income from other sources"; the TDS banks already cut from received interest is a credit against it
@@ -87,10 +87,9 @@ export async function loadState(c: pg.PoolClient, asOf = new Date().toISOString(
   for (const h of hhRows) {
     const label = `Household · ${h.category} · ${h.label}`; const amt = Number(h.monthly_amount); const g = Number(h.growth_pct) / 100;
     if (h.frequency === "once") { if (h.once_on && h.once_on >= asOf) household.push({ entityId: h.entity_id, date: h.once_on, amount: Math.round(amt * 100) / 100, label }); continue; }
-    if (h.frequency === "yearly") { // one payment a year, on the 1st of this month, growing each year
-      for (let k = 0; k < 5; k++) { const date = `${ay + k}-${String(am).padStart(2, "0")}-01`; if (date < asOf) continue; if (h.from_month && date < h.from_month) continue; if (h.to_month && date > h.to_month) continue; household.push({ entityId: h.entity_id, date, amount: Math.round(amt * Math.pow(1 + g, k) * 100) / 100, label }); }
-      continue; }
-    for (let m = 0; m < 60; m++) {
+    // every 1, 3, 6 or 12 months, on the 1st, growing each year
+    const step = h.frequency === "yearly" ? 12 : h.frequency === "half_yearly" ? 6 : h.frequency === "quarterly" ? 3 : 1;
+    for (let m = 0; m < 60; m += step) {
       const y = ay + Math.floor((am - 1 + m) / 12), mo = ((am - 1 + m) % 12) + 1; const date = `${y}-${String(mo).padStart(2, "0")}-01`;
       if (date < asOf) continue; if (h.from_month && date < h.from_month) continue; if (h.to_month && date > h.to_month) continue;
       household.push({ entityId: h.entity_id, date, amount: Math.round(amt * Math.pow(1 + g, Math.floor(m / 12)) * 100) / 100, label });

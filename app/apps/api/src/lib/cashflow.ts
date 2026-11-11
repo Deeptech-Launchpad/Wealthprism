@@ -5,6 +5,8 @@ import type pg from "pg";
 const num = (v: any) => Number(v ?? 0);
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const PREMIUM_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 };
+// months between payments for each way of repeating a manual entry; one-off has no monthly figure
+const EVERY_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 };
 
 export async function cashflowSummary(c: pg.PoolClient, familyId: string) {
   // names of the linked assets, so each line can say which asset it belongs to
@@ -30,7 +32,7 @@ export async function cashflowSummary(c: pg.PoolClient, familyId: string) {
   // 3. household expenses you enter. The amount is stored in monthly_amount whatever the frequency (monthly, yearly or once).
   for (const h of (await c.query("select h.id, h.category, h.label, h.monthly_amount, h.frequency, to_char(h.once_on,'YYYY-MM-DD') once_on, h.linked_type, h.linked_id, e.name entity_name from household_expenses h join entities e on e.id=h.entity_id where h.family_id=$1 and h.deleted_at is null order by h.label", [familyId])).rows) {
     const amt = num(h.monthly_amount);
-    const monthly = h.frequency === "monthly" ? amt : h.frequency === "yearly" ? amt / 12 : 0;
+    const monthly = EVERY_MONTHS[h.frequency] ? amt / EVERY_MONTHS[h.frequency] : 0;
     lines.push({ id: h.id, group: "expense", source: "manual", label: h.label, detail: `${h.entity_name} · ${h.category}`, frequency: h.frequency, monthly: r2(monthly), once_on: h.once_on, once_amount: h.frequency === "once" ? amt : null, auto: false, linked_type: h.linked_type, linked_id: h.linked_id });
   }
 

@@ -13,7 +13,8 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 const listOf = (d: any): any[] => (Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : []);
 
 const CATEGORIES = ["housing", "food", "transport", "school", "health", "insurance", "entertainment", "other"];
-const FREQ_LABEL: Record<string, string> = { monthly: "per month", yearly: "per year", once: "one-off" };
+const FREQ_LABEL: Record<string, string> = { monthly: "every month", quarterly: "every 3 months", half_yearly: "every 6 months", yearly: "every year", once: "one-off" };
+const FREQ_SUFFIX: Record<string, string> = { monthly: "/month", quarterly: "/3 months", half_yearly: "/6 months", yearly: "/year", once: "" };
 
 export function IncomeExpenses() {
   const summary = useApi<any>("/cashflow/summary");
@@ -42,8 +43,7 @@ export function IncomeExpenses() {
   const saveIncome = async () => {
     setErr("");
     try {
-      const body: any = { entity_id: inc.entity_id, kind: inc.kind, label: inc.label, frequency: inc.frequency, growth_pct: Number(inc.growth_pct || 0), ...split(inc.asset) };
-      if (inc.frequency === "monthly") body.monthly_amount = Number(inc.amount); else body.annual_amount = Number(inc.amount);
+      const body: any = { entity_id: inc.entity_id, kind: inc.kind, label: inc.label, frequency: inc.frequency, amount: Number(inc.amount), growth_pct: Number(inc.growth_pct || 0), ...split(inc.asset) };
       await api("/tax/inputs/income", { method: "POST", body: JSON.stringify(body) }); setInc(null); refresh();
     } catch (e: any) { setErr(e.message); }
   };
@@ -92,8 +92,8 @@ export function IncomeExpenses() {
 
       <Card title="Your entries" action={<div className="row gap"><button className="btn btn-s" onClick={() => setInc({ entity_id: ents.data?.[0]?.id ?? "", kind: "salary", label: "", frequency: "monthly", amount: "", growth_pct: "0", asset: "" })}><Plus size={13} /> Income</button><button className="btn btn-s" onClick={() => setHh({ entity_id: ents.data?.[0]?.id ?? "", category: "food", label: "", frequency: "monthly", amount: "", once_on: "", growth_pct: "6", deduction_code: "", asset: "" })}><Plus size={13} /> Expense</button></div>}>
         {manualIncome.length + manualHousehold.length === 0 && <div className="small mute">No entries yet. Use Income or Expense above.</div>}
-        {manualIncome.map((s2: any) => <div key={s2.id} className="attn"><span style={{ flex: 1 }}>Income · {s2.label} <span className="mute small">({s2.kind}, {s2.frequency === "monthly" ? "monthly" : "yearly"}{Number(s2.growth_pct) ? `, +${s2.growth_pct}%/yr` : ""}{s2.linked_type ? ", linked to an asset" : ""})</span></span><span className="num">{inr(Number(s2.annual_amount) / 12)}/mo</span><button className="btn btn-s" onClick={() => removeIncome(s2.id)}>Remove</button></div>)}
-        {manualHousehold.map((h: any) => <div key={h.id} className="attn"><span style={{ flex: 1 }}>Expense · {h.label} <span className="mute small">({h.category}, {FREQ_LABEL[h.frequency] ?? h.frequency}{h.frequency === "once" && h.once_on ? ` on ${h.once_on}` : ""}{Number(h.growth_pct) ? `, +${h.growth_pct}%/yr` : ""}{h.deduction_code ? `, deduction ${h.deduction_code}` : ""}{h.linked_type ? ", linked to an asset" : ""})</span></span><span className="num">{inr(h.monthly_amount)}{h.frequency === "monthly" ? "/mo" : h.frequency === "yearly" ? "/yr" : ""}</span><button className="btn btn-s" onClick={() => removeHousehold(h.id)}>Remove</button></div>)}
+        {manualIncome.map((s2: any) => <div key={s2.id} className="attn"><span style={{ flex: 1 }}>Income · {s2.label} <span className="mute small">({s2.kind}, {FREQ_LABEL[s2.frequency] ?? s2.frequency}{Number(s2.growth_pct) ? `, +${s2.growth_pct}%/yr` : ""}{s2.linked_type ? ", linked to an asset" : ""})</span></span><span className="num">{inr(Number(s2.annual_amount) / 12)}/mo</span><button className="btn btn-s" onClick={() => removeIncome(s2.id)}>Remove</button></div>)}
+        {manualHousehold.map((h: any) => <div key={h.id} className="attn"><span style={{ flex: 1 }}>Expense · {h.label} <span className="mute small">({h.category}, {FREQ_LABEL[h.frequency] ?? h.frequency}{h.frequency === "once" && h.once_on ? ` on ${h.once_on}` : ""}{Number(h.growth_pct) ? `, +${h.growth_pct}%/yr` : ""}{h.deduction_code ? `, deduction ${h.deduction_code}` : ""}{h.linked_type ? ", linked to an asset" : ""})</span></span><span className="num">{inr(h.monthly_amount)}{FREQ_SUFFIX[h.frequency] ?? ""}</span><button className="btn btn-s" onClick={() => removeHousehold(h.id)}>Remove</button></div>)}
       </Card>
 
       {err && <div className="err" style={{ marginTop: 8 }}>{err}</div>}
@@ -103,8 +103,8 @@ export function IncomeExpenses() {
           <Field label="Entity"><select value={inc.entity_id} onChange={(e) => setInc({ ...inc, entity_id: e.target.value })}>{(ents.data ?? []).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></Field>
           <Field label="Kind"><select value={inc.kind} onChange={(e) => setInc({ ...inc, kind: e.target.value })}>{["salary", "fees", "business", "interest", "dividend", "other"].map((k) => <option key={k}>{k}</option>)}</select></Field>
           <Field label="Label"><input value={inc.label} onChange={(e) => setInc({ ...inc, label: e.target.value })} /></Field>
-          <Field label="How often"><select value={inc.frequency} onChange={(e) => setInc({ ...inc, frequency: e.target.value })}><option value="monthly">every month</option><option value="yearly">every year</option></select></Field>
-          <Field label={inc.frequency === "monthly" ? "Amount per month (₹)" : "Amount per year (₹)"}><input type="number" value={inc.amount} onChange={(e) => setInc({ ...inc, amount: e.target.value })} /></Field>
+          <Field label="How often"><select value={inc.frequency} onChange={(e) => setInc({ ...inc, frequency: e.target.value })}><option value="monthly">every month</option><option value="quarterly">every 3 months</option><option value="half_yearly">every 6 months</option><option value="yearly">every year</option></select></Field>
+          <Field label="Amount per payment (₹)"><input type="number" value={inc.amount} onChange={(e) => setInc({ ...inc, amount: e.target.value })} /></Field>
           <Field label="Grows each year (%)"><input type="number" value={inc.growth_pct} onChange={(e) => setInc({ ...inc, growth_pct: e.target.value })} /></Field>
           <Field label="Linked to (optional)"><select value={inc.asset} onChange={(e) => setInc({ ...inc, asset: e.target.value })}><option value="">— not linked to an asset</option>{assetOptions.map((o) => <option key={o.v} value={o.v}>{o.t}</option>)}</select></Field>
         </div>
@@ -116,8 +116,8 @@ export function IncomeExpenses() {
           <Field label="Entity"><select value={hh.entity_id} onChange={(e) => setHh({ ...hh, entity_id: e.target.value })}>{(ents.data ?? []).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></Field>
           <Field label="Category"><select value={hh.category} onChange={(e) => setHh({ ...hh, category: e.target.value })}>{CATEGORIES.map((k) => <option key={k}>{k}</option>)}</select></Field>
           <Field label="What (label)"><input value={hh.label} onChange={(e) => setHh({ ...hh, label: e.target.value })} /></Field>
-          <Field label="How often"><select value={hh.frequency} onChange={(e) => setHh({ ...hh, frequency: e.target.value })}><option value="monthly">every month</option><option value="yearly">every year</option><option value="once">one-off</option></select></Field>
-          <Field label={hh.frequency === "monthly" ? "Amount per month (₹)" : hh.frequency === "yearly" ? "Amount per year (₹)" : "Amount (₹)"}><input type="number" value={hh.amount} onChange={(e) => setHh({ ...hh, amount: e.target.value })} /></Field>
+          <Field label="How often"><select value={hh.frequency} onChange={(e) => setHh({ ...hh, frequency: e.target.value })}><option value="monthly">every month</option><option value="quarterly">every 3 months</option><option value="half_yearly">every 6 months</option><option value="yearly">every year</option><option value="once">one-off</option></select></Field>
+          <Field label={hh.frequency === "once" ? "Amount (₹)" : "Amount per payment (₹)"}><input type="number" value={hh.amount} onChange={(e) => setHh({ ...hh, amount: e.target.value })} /></Field>
           {hh.frequency === "once" && <Field label="Date paid"><input type="date" value={hh.once_on} onChange={(e) => setHh({ ...hh, once_on: e.target.value })} /></Field>}
           <Field label="Grows each year (%)"><input type="number" value={hh.growth_pct} onChange={(e) => setHh({ ...hh, growth_pct: e.target.value })} /></Field>
           <Field label="Tax deduction code (optional, e.g. 80C)"><input value={hh.deduction_code} onChange={(e) => setHh({ ...hh, deduction_code: e.target.value })} /></Field>
