@@ -97,11 +97,11 @@ function GoalList({ onChange }: { onChange: () => void }) {
     {act.msg}
   </Card>);
 }
-const linkKey = (l: any) => l.holding_id ? `holding_id:${l.holding_id}` : l.property_id ? `property_id:${l.property_id}` : l.private_investment_id ? `private_investment_id:${l.private_investment_id}` : `deposit_id:${l.deposit_id}`;
+const linkKey = (l: any) => l.holding_id ? `holding_id:${l.holding_id}` : l.property_id ? `property_id:${l.property_id}` : l.private_investment_id ? `private_investment_id:${l.private_investment_id}` : l.savings_account_id ? `savings_account_id:${l.savings_account_id}` : `deposit_id:${l.deposit_id}`;
 function GoalDetail({ id, onChange }: { id: string; onChange: () => void }) {
   const d = useApi<any>(`/goals/${id}`);
   const [edit, setEdit] = useState(false); const [sel, setSel] = useState<Record<string, string>>({}); const [err, setErr] = useState("");
-  const hold = useApi<any>(edit ? "/holdings" : null); const props = useApi<any[]>(edit ? "/properties" : null); const priv = useApi<any[]>(edit ? "/private-investments" : null); const deps = useApi<any[]>(edit ? "/deposits" : null);
+  const hold = useApi<any>(edit ? "/holdings" : null); const props = useApi<any[]>(edit ? "/properties" : null); const priv = useApi<any[]>(edit ? "/private-investments" : null); const deps = useApi<any[]>(edit ? "/deposits" : null); const sav = useApi<any[]>(edit ? "/savings-accounts" : null);
   if (d.loading || d.error) return <div className="small mute">{d.loading ? "Loading…" : d.error}</div>;
   const g = d.data;
   const options = [
@@ -109,6 +109,7 @@ function GoalDetail({ id, onChange }: { id: string; onChange: () => void }) {
     ...(props.data ?? []).map((p: any) => ({ key: `property_id:${p.id}`, kind: "Property", name: p.name, value: p.current_value })),
     ...(priv.data ?? []).map((p: any) => ({ key: `private_investment_id:${p.id}`, kind: "Private stake", name: p.company, value: p.mark ?? p.amount })),
     ...(deps.data ?? []).map((x: any) => ({ key: `deposit_id:${x.id}`, kind: "Deposit", name: `${x.bank} ${x.kind.toUpperCase()}${x.account_no ? ` ${x.account_no}` : ""}`, value: x.current_value })),
+    ...(sav.data ?? []).map((s: any) => ({ key: `savings_account_id:${s.id}`, kind: "Savings", name: `${s.institution} ${String(s.scheme).toUpperCase()}`, value: s.balance })),
   ];
   const startEdit = () => { setErr(""); setSel(Object.fromEntries((g.links ?? []).map((l: any) => [linkKey(l), String(l.allocation_pct)]))); setEdit(true); };
   const toggle = (k: string) => { const n = { ...sel }; if (k in n) delete n[k]; else n[k] = "100"; setSel(n); };

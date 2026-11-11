@@ -6,6 +6,7 @@ import { bucketDrift } from "@fo/finance";
 import { activeDepositValues } from "./depositvalue.js";
 import { money } from "./db.js";
 import { positions } from "./analytics.js";
+import { accountBalance } from "./savings.js";
 
 export class AllocError extends Error { constructor(public status: number, message: string, public extra?: Record<string, unknown>) { super(message); } }
 export const today = () => new Date().toISOString().slice(0, 10);
@@ -22,18 +23,19 @@ export interface GoalInput { entity_id?: string | null; name: string; target_yea
 const inflated = (g: any) => Number(g.amount_today) * Math.pow(1 + Number(g.inflation_pct ?? 6) / 100, Math.max(0, Number(g.target_year) - new Date().getUTCFullYear()));
 /** Linked value: holdings (× allocation %), private stakes at their mark and properties at their latest valuation. */
 export async function goalLinkedValue(c: pg.PoolClient, familyId: string, goalId: string) {
-  const rows = (await c.query(`select l.allocation_pct, l.holding_id, l.private_investment_id, l.property_id, l.deposit_id,
+  const rows = (await c.query(`select l.allocation_pct, l.holding_id, l.private_investment_id, l.property_id, l.deposit_id, l.savings_account_id,
       (select round(h.quantity * coalesce((select close from prices p where p.instrument_id=h.instrument_id order by price_date desc limit 1), accrued_unit_price(h.id, h.avg_cost)), 2) from holdings h where h.id=l.holding_id) hv,
       (select coalesce((select value from private_marks m where m.private_investment_id=pi.id order by marked_on desc limit 1), pi.amount) from private_investments pi where pi.id=l.private_investment_id) pv,
       (select coalesce((select value from property_valuations v where v.property_id=p.id order by valued_on desc limit 1), p.acquisition_cost) from properties p where p.id=l.property_id) rv
     from goal_links l where l.goal_id=$1`, [goalId])).rows;
   const deposits = new Map((await activeDepositValues(c, familyId)).map((d) => [d.id, d.value]));
-  return r2(rows.reduce((s, r) => s + (Number(r.hv ?? r.pv ?? r.rv ?? (r.deposit_id ? deposits.get(r.deposit_id) : 0) ?? 0) * Number(r.allocation_pct ?? 100)) / 100, 0));
+  const savings = new Map<string, number>(); for (const r of rows) if (r.savings_account_id && !savings.has(r.savings_account_id)) savings.set(r.savings_account_id, await accountBalance(c, r.savings_account_id));
+  return r2(rows.reduce((s, r) => s + (Number(r.hv ?? r.pv ?? r.rv ?? (r.deposit_id ? deposits.get(r.deposit_id) : r.savings_account_id ? savings.get(r.savings_account_id) : 0) ?? 0) * Number(r.allocation_pct ?? 100)) / 100, 0));
 }
 export async function goalView(c: pg.PoolClient, familyId: string, g: any) {
   const linked = await goalLinkedValue(c, familyId, g.id); const need = inflated(g); const funded = need ? r2((linked / need) * 100) : 0;
   await c.query("update goals set funded_pct=$2 where id=$1 and funded_pct is distinct from $2", [g.id, funded]);
-  const links = (await c.query(`select l.*, coalesce(i.name, co.name, p.name, dp.bank || ' ' || upper(dp.kind) || coalesce(' ' || dp.account_no, '')) name from goal_links l left join holdings h on h.id=l.holding_id left join instruments i on i.id=h.instrument_id left join private_investments pi on pi.id=l.private_investment_id left join private_companies co on co.id=pi.company_id left join properties p on p.id=l.property_id left join deposits dp on dp.id=l.deposit_id where l.goal_id=$1`, [g.id])).rows;
+  const links = (await c.query(`select l.*, coalesce(i.name, co.name, p.name, dp.bank || ' ' || upper(dp.kind) || coalesce(' ' || dp.account_no, ''), sa.institution || ' ' || upper(sa.scheme)) name from goal_links l left join savings_accounts sa on sa.id=l.savings_account_id left join holdings h on h.id=l.holding_id left join instruments i on i.id=h.instrument_id left join private_investments pi on pi.id=l.private_investment_id left join private_companies co on co.id=pi.company_id left join properties p on p.id=l.property_id left join deposits dp on dp.id=l.deposit_id where l.goal_id=$1`, [g.id])).rows;
   const years = Math.max(0, Number(g.target_year) - new Date().getUTCFullYear()); const ret = Number(g.assumed_return_pct ?? 10) / 100; const gap = Math.max(0, need - linked * Math.pow(1 + ret, years));
   const monthly = years > 0 && ret > 0 ? gap * (ret / 12) / (Math.pow(1 + ret / 12, years * 12) - 1) : years > 0 ? gap / (years * 12) : gap;
   return { ...g, amount_today: money(g.amount_today), inflated_need: money(need), linked_value: money(linked), funded_pct: funded, gap_at_target: money(gap), monthly_required: money(monthly), years_left: years, links: links.map((l) => ({ ...l, allocation_pct: Number(l.allocation_pct ?? 100) })) };
@@ -47,15 +49,15 @@ export async function updateGoal(c: pg.PoolClient, familyId: string, id: string,
   const r = (await c.query("update goals set entity_id=case when $3::boolean then $4 else entity_id end, name=coalesce($5,name), target_year=coalesce($6,target_year), amount_today=coalesce($7,amount_today), inflation_pct=coalesce($8,inflation_pct), bucket=coalesce($9,bucket), assumed_return_pct=coalesce($10,assumed_return_pct), status=coalesce($11,status) where id=$1 and family_id=$2 returning *", [id, familyId, b.entity_id !== undefined, b.entity_id ?? null, b.name ?? null, b.target_year ?? null, b.amount_today ?? null, b.inflation_pct ?? null, b.bucket ?? null, b.assumed_return_pct ?? null, b.status ?? null])).rows[0];
   if (!r) throw new AllocError(404, "Goal not found"); return goalView(c, familyId, r);
 }
-export async function setGoalLinks(c: pg.PoolClient, familyId: string, id: string, links: { holding_id?: string | null; private_investment_id?: string | null; property_id?: string | null; deposit_id?: string | null; allocation_pct?: number }[]) {
+export async function setGoalLinks(c: pg.PoolClient, familyId: string, id: string, links: { holding_id?: string | null; private_investment_id?: string | null; property_id?: string | null; deposit_id?: string | null; savings_account_id?: string | null; allocation_pct?: number }[]) {
   const g = (await c.query("select * from goals where id=$1 and family_id=$2", [id, familyId])).rows[0]; if (!g) throw new AllocError(404, "Goal not found");
   for (const l of links) {
-    const n = [l.holding_id, l.private_investment_id, l.property_id, l.deposit_id].filter(Boolean).length; if (n !== 1) throw new AllocError(422, "Each link names exactly one of holding_id, private_investment_id, property_id, deposit_id");
-    const ok = l.deposit_id ? (await c.query("select 1 from deposits where id=$1 and family_id=$2", [l.deposit_id, familyId])).rowCount : l.holding_id ? (await c.query("select 1 from holdings where id=$1 and family_id=$2", [l.holding_id, familyId])).rowCount : l.private_investment_id ? (await c.query("select 1 from private_investments where id=$1 and family_id=$2", [l.private_investment_id, familyId])).rowCount : (await c.query("select 1 from properties where id=$1 and family_id=$2 and deleted_at is null", [l.property_id, familyId])).rowCount;
+    const n = [l.holding_id, l.private_investment_id, l.property_id, l.deposit_id, l.savings_account_id].filter(Boolean).length; if (n !== 1) throw new AllocError(422, "Each link names exactly one of holding_id, private_investment_id, property_id, deposit_id, savings_account_id");
+    const ok = l.savings_account_id ? (await c.query("select 1 from savings_accounts where id=$1 and family_id=$2", [l.savings_account_id, familyId])).rowCount : l.deposit_id ? (await c.query("select 1 from deposits where id=$1 and family_id=$2", [l.deposit_id, familyId])).rowCount : l.holding_id ? (await c.query("select 1 from holdings where id=$1 and family_id=$2", [l.holding_id, familyId])).rowCount : l.private_investment_id ? (await c.query("select 1 from private_investments where id=$1 and family_id=$2", [l.private_investment_id, familyId])).rowCount : (await c.query("select 1 from properties where id=$1 and family_id=$2 and deleted_at is null", [l.property_id, familyId])).rowCount;
     if (!ok) throw new AllocError(404, "Linked asset not found");
   }
   await c.query("delete from goal_links where goal_id=$1", [id]);
-  for (const l of links) await c.query("insert into goal_links (goal_id, holding_id, private_investment_id, property_id, deposit_id, allocation_pct) values ($1,$2,$3,$4,$5,$6)", [id, l.holding_id ?? null, l.private_investment_id ?? null, l.property_id ?? null, l.deposit_id ?? null, l.allocation_pct ?? 100]);
+  for (const l of links) await c.query("insert into goal_links (goal_id, holding_id, private_investment_id, property_id, deposit_id, savings_account_id, allocation_pct) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.holding_id ?? null, l.private_investment_id ?? null, l.property_id ?? null, l.deposit_id ?? null, l.savings_account_id ?? null, l.allocation_pct ?? 100]);
   await c.query("update holdings set goal_id=case when id = any($2::uuid[]) then $1 else case when goal_id=$1 then null else goal_id end end where family_id=$3", [id, links.map((l) => l.holding_id).filter(Boolean), familyId]);
   return goalView(c, familyId, g);
 }

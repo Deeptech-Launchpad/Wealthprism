@@ -206,3 +206,11 @@ export function withdrawRules(a: any, entries: Entry[], scheme: "ppf" | "ssy", d
     : { allowed: false, reason: `A Sukanya account can be closed early only on marriage after 18 (from ${opens}), or on the girl's death or a serious illness`, opens_on: opens, needs_reason: true, reasons: SSY_REASONS, estimate: now };
   return { part, close };
 }
+
+/** Current balance of one PPF / EPF / SSY account, worked out the same way the savings screen shows it (for goal funding). */
+export async function accountBalance(c: any, accountId: string): Promise<number> {
+  const row = (await c.query("select a.*, a.opened_on::text opened_on, a.matures_on::text matures_on, a.deposits_until::text deposits_until, a.tracked_from::text tracked_from, a.closed_on::text closed_on from savings_accounts a where a.id=$1", [accountId])).rows[0];
+  if (!row) return 0;
+  const entries = (await c.query("select e.*, e.entry_date::text entry_date, e.amount::float8 amount from savings_entries e where e.account_id=$1 order by e.entry_date, e.created_at", [accountId])).rows;
+  return viewAccount(row, entries as any, row.scheme as Scheme).balance;
+}
