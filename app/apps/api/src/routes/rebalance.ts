@@ -74,11 +74,12 @@ export default async function routes(app: FastifyInstance) {
         if (sim.new_breach && !b.override_breach) return void reply.code(409).send({ title: "The plan leaves a new policy breach — override with a note or edit the plan", status: 409, simulation: sim });
         try { await c.query("update rebalance_plans set status='approved', approved_by=$2, approved_at=now(), note=coalesce($3,note) where id=$1", [id, req.user!.id, b.note ?? null]); } catch (e: any) { return void reply.code(409).send({ title: e.message.replace(/^.*?illegal/, "Illegal"), status: 409 }); } // the DB state machine decides
         await c.query("update rebalance_runs set status='plan_approved' where plan_id=$1", [id]);
+        await c.query("update tasks set status='done', done_at=now() where family_id=$1 and status='open' and source_type='rebalance_plan' and source_id=$2", [fam(req), id]);   // the plan is decided, so its "ready to review" task is done
         return planView(c, id);
       }
       if (b.status === "converted") { const r = await convertPlan(c, fam(req), id, req.user!.id); return { ...(await planView(c, id)), intents: r.intents }; }
       try { await c.query("update rebalance_plans set status=$2::rebalance_plan_status, note=coalesce($3,note) where id=$1", [id, b.status, b.note ?? null]); } catch (e: any) { return void reply.code(409).send({ title: e.message.replace(/^.*?illegal/, "Illegal"), status: 409 }); }
-      if (b.status === "cancelled") { await c.query("update rebalance_runs set status='cancelled' where plan_id=$1", [id]); await c.query("delete from need_coverage where move_id in (select id from rebalance_moves where plan_id=$1)", [id]); }
+      if (b.status === "cancelled") { await c.query("update tasks set status='done', done_at=now() where family_id=$1 and status='open' and source_type='rebalance_plan' and source_id=$2", [fam(req), id]); await c.query("update rebalance_runs set status='cancelled' where plan_id=$1", [id]); await c.query("delete from need_coverage where move_id in (select id from rebalance_moves where plan_id=$1)", [id]); }
       return planView(c, id);
     } catch (e) { return problem(reply, e); } });
   });

@@ -144,6 +144,8 @@ export async function runProgram(c: pg.PoolClient, familyId: string, programId: 
 }
 /** Nightly: evaluate every active program's triggers and run the first one that fires (one open plan per program at a time). */
 export async function evaluatePrograms(c: pg.PoolClient, familyId: string, day = today()) {
+  // a "plan ready to review" task is done once its plan has been approved, converted, cancelled or replaced
+  await c.query("update tasks set status='done', done_at=now() where family_id=$1 and status='open' and source_type='rebalance_plan' and source_id in (select id from rebalance_plans where family_id=$1 and status not in ('draft','in_review'))", [familyId]);
   await gatherNeeds(c, familyId, day).catch(() => null);
   for (const pol of (await c.query("select * from investment_policies where family_id=$1 and deleted_at is null and current_version_id is not null and scope <> 'goal'", [familyId])).rows) await ensureProgramFor(c, familyId, pol);
   const programs = (await c.query("select * from rebalance_programs where family_id=$1 and active order by scope, name", [familyId])).rows as ProgramRow[];
