@@ -9,6 +9,9 @@ import { Card } from "../components";
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field">{label}{children}</label>; }
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="modal-bg" onClick={onClose}><div className="modal" onClick={(e) => e.stopPropagation()}><h3 style={{ margin: 0 }}>{title}</h3>{children}</div></div>; }
 
+// some lists come back as a plain array and some as { items }; accept both so one shape never crashes the page
+const listOf = (d: any): any[] => (Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : []);
+
 const CATEGORIES = ["housing", "food", "transport", "school", "health", "insurance", "entertainment", "other"];
 const FREQ_LABEL: Record<string, string> = { monthly: "per month", yearly: "per year", once: "one-off" };
 
@@ -28,7 +31,7 @@ export function IncomeExpenses() {
   // every asset the app knows about, as one list; the value says what kind it is
   const assetOptions: { v: string; t: string }[] = [
     ...(props.data ?? []).map((p: any) => ({ v: `property:${p.id}`, t: `Flat / land · ${p.name}` })),
-    ...(hold.data ?? []).map((h: any) => ({ v: `holding:${h.id}`, t: `Investment · ${h.instrument}` })),
+    ...listOf(hold.data).map((h: any) => ({ v: `holding:${h.id}`, t: `Investment · ${h.instrument}` })),
     ...(life.data ?? []).map((l: any) => ({ v: `lifestyle_asset:${l.id}`, t: `Physical · ${l.name}` })),
     ...(ins.data ?? []).map((p: any) => ({ v: `insurance_policy:${p.id}`, t: `Insurance · ${p.insurer} (${p.kind})` })),
     ...(sav.data ?? []).map((s: any) => ({ v: `savings_account:${s.id}`, t: `Savings · ${s.institution} (${String(s.scheme).toUpperCase()})` })),
