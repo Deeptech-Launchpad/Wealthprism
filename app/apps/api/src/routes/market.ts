@@ -88,7 +88,7 @@ export default async function routes(app: FastifyInstance) {
       const series = [...monthEnds.entries()].map(([m, v]) => { const d = p.valuations.filter((x) => x.date.startsWith(m)).pop()!.date; return { date: d, value: money(v), benchmark: benchAt(d) == null ? null : money(benchAt(d)) }; });
       return { scope_type: q.scope_type, scope_id: scopeId, scope_label: label, period: q.period, from: p.from, to: p.to, days: p.days, annualised: p.annualised,
         twr_pct: p.twr_pct, twr_cumulative_pct: p.twr_cumulative_pct, xirr_pct: p.xirr_pct, benchmark: p.benchmark, benchmark_pct: p.benchmark_pct, excess_pct: p.excess_pct,
-        divergence_note: p.xirr_pct == null ? null : divergenceNote(p.twr_pct, p.xirr_pct, p.valuations, p.flows),
+        divergence_note: p.xirr_pct == null || p.twr_pct == null ? null : divergenceNote(p.twr_pct, p.xirr_pct, p.valuations, p.flows),
         opening_value: money(p.valuations[0]?.value ?? 0), closing_value: money(p.valuations[p.valuations.length - 1]?.value ?? 0), net_flow: money(p.flows.reduce((s, f) => s + f.amount, 0)),
         valuations: p.valuations.length, flows: p.flows.length, series };
     });

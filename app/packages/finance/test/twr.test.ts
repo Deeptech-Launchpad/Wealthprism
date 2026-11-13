@@ -80,3 +80,12 @@ describe("corporate actions on lots", () => {
     expect(out[0].remainingQty).toBe(14); expect(out[0].unitCost * 14).toBeCloseTo(1471.43 * 21, 2); expect(out[0].charges).toBe(12);
   });
 });
+
+describe("twr reliability (demo case: a purchase on day two of a tiny start)", () => {
+  it("is not reliable over two days, or when money dominates the starting value", () => {
+    const short = twr([{ date: "2026-11-09", value: 8000 }, { date: "2026-11-11", value: 319000 }], [{ date: "2026-11-11", amount: 275857 }]);
+    expect(short.reliable).toBe(false);
+    const long = twr([{ date: "2026-01-01", value: 1000000 }, { date: "2026-12-31", value: 1100000 }]);
+    expect(long.reliable).toBe(true);
+  });
+});

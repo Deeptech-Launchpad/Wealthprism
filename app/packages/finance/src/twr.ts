@@ -3,7 +3,9 @@ export interface Valuation { date: string; value: number }
 /** +contribution into the scope, −withdrawal out of it, on `date` (treated as end of that day). */
 export interface Flow { date: string; amount: number }
 export interface SubPeriod { from: string; to: string; startValue: number; endValue: number; netFlow: number; ret: number }
-export interface TwrResult { total: number; annualised: number | null; days: number; subPeriods: SubPeriod[] }
+export interface TwrResult { total: number; annualised: number | null; days: number; subPeriods: SubPeriod[]; reliable: boolean }
+/** A money-in or money-out so large against the starting value that the start is no longer a meaningful base for a return. */
+const flowHeavy = (startValue: number, netFlow: number) => Math.abs(netFlow) >= 0.5 * Math.max(startValue, 1);
 
 const DAY = 86400000;
 const days = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / DAY);
@@ -37,7 +39,7 @@ export function annualise(total: number, periodDays: number): number | null {
 /** TWR from a dated valuation series (daily or sparser) with the external flows that happened between valuations. */
 export function twr(valuations: Valuation[], flows: Flow[] = []): TwrResult {
   const v = [...valuations].sort((a, b) => a.date.localeCompare(b.date));
-  if (v.length < 2) return { total: 0, annualised: null, days: 0, subPeriods: [] };
+  if (v.length < 2) return { total: 0, annualised: null, days: 0, subPeriods: [], reliable: false };
   const subPeriods: SubPeriod[] = [];
   for (let i = 1; i < v.length; i++) {
     const a = v[i - 1], b = v[i];
@@ -49,7 +51,9 @@ export function twr(valuations: Valuation[], flows: Flow[] = []): TwrResult {
   }
   const total = linkReturns(subPeriods.map((s) => s.ret));
   const d = days(v[0].date, v[v.length - 1].date);
-  return { total, annualised: annualise(total, d), days: d, subPeriods };
+  // a return is only reliable over a month or more, and when no sub-period was dominated by money moving in or out
+  const reliable = d >= 30 && !subPeriods.some((s) => flowHeavy(s.startValue, s.netFlow));
+  return { total, annualised: annualise(total, d), days: d, subPeriods, reliable };
 }
 
 /** Cash flows for XIRR of the same scope and window: opening value out, flows as they happened, closing value in. */

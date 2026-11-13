@@ -251,9 +251,10 @@ export async function performance(c: pg.PoolClient, s: Scope, from: string, to: 
     bench = await benchmarkSeries(code, vals[0].date, vals[vals.length - 1].date);
     if (bench.length >= 2) { const total = bench[bench.length - 1].value / bench[0].value - 1; const ann = r.days >= 365 ? Math.pow(1 + total, 365 / r.days) - 1 : total; benchmarkPct = +(ann * 100).toFixed(2); }
   }
-  const twrPct = +((r.annualised ?? r.total) * 100).toFixed(2);
-  return { from: vals[0]?.date ?? from, to: vals[vals.length - 1]?.date ?? to, days: r.days, annualised: r.annualised != null, twr_pct: twrPct, twr_cumulative_pct: +(r.total * 100).toFixed(2), xirr_pct: xirrPct,
-    benchmark: code, benchmark_pct: benchmarkPct, excess_pct: benchmarkPct == null ? null : +(twrPct - benchmarkPct).toFixed(2), valuations: vals, flows, benchmark_series: bench, sub_periods: r.subPeriods.length };
+  // not reliable yet (too short, or money dominated the start): show no figure rather than a misleading one
+  const twrPct = r.reliable ? +((r.annualised ?? r.total) * 100).toFixed(2) : null;
+  return { from: vals[0]?.date ?? from, to: vals[vals.length - 1]?.date ?? to, days: r.days, annualised: r.annualised != null, twr_pct: twrPct, twr_cumulative_pct: r.reliable ? +(r.total * 100).toFixed(2) : null, xirr_pct: xirrPct,
+    benchmark: code, benchmark_pct: benchmarkPct, excess_pct: benchmarkPct == null || twrPct == null ? null : +(twrPct - benchmarkPct).toFixed(2), valuations: vals, flows, benchmark_series: bench, sub_periods: r.subPeriods.length };
 }
 
 /** Nightly: cache TWR and XIRR for family / entity / bucket scopes over the standard periods. */
