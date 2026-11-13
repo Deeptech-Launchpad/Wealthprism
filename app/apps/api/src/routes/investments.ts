@@ -19,6 +19,30 @@ const CLASS_OF = (i: any) => (["stock", "etf"].includes(i.type) ? "equity" : i.t
 export default async function investmentsRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireFamily);
   const fam = (req: any) => req.family!.familyId as string;
+  /** Delete a manually entered transaction and undo what it did: a sale gives its units back to the lots it used and removes its gain;
+   *  a purchase is removed only if no later sale used it. The holding is then recalculated from its lots. Statement rows are not deleted here. */
+  app.delete("/investment-txns/:id", { preHandler: WRITERS }, async (req, reply) => {
+    return withFamily(fam(req), async (c) => {
+      const id = (req.params as any).id;
+      const t = (await c.query("select * from investment_txns where id=$1 and family_id=$2", [id, fam(req)])).rows[0];
+      if (!t) return void reply.code(404).send({ title: "Transaction not found", status: 404 });
+      if (t.source !== "manual") return void reply.code(409).send({ title: "Only a transaction entered by hand can be deleted. Statement entries are corrected by re-importing a corrected statement.", status: 409 });
+      const holding = (await c.query("select id from holdings where family_id=$1 and entity_id=$2 and account_id is not distinct from $3 and instrument_id=$4 limit 1", [fam(req), t.entity_id, t.account_id, t.instrument_id])).rows[0];
+      if (["sell", "redemption", "switch_out"].includes(t.type)) {
+        // give the units back to the lots this sale used, and drop the gain it booked
+        for (const g of (await c.query("select lot_id, quantity from realized_gains where sell_txn_id=$1", [id])).rows) await c.query("update lots set remaining_qty = remaining_qty + $2 where id=$1", [g.lot_id, g.quantity]);
+        await c.query("delete from realized_gains where sell_txn_id=$1", [id]);
+      } else if (["buy", "sip", "switch_in"].includes(t.type)) {
+        const used = (await c.query("select count(*)::int n from lots where source_txn_id=$1 and remaining_qty < quantity", [id])).rows[0].n;
+        if (used) return void reply.code(409).send({ title: "Later sales use this purchase. Delete those sales first.", status: 409 });
+        await c.query("delete from lots where source_txn_id=$1", [id]);
+      }
+      await c.query("delete from investment_txns where id=$1", [id]);
+      if (holding) await c.query("update holdings h set quantity = s.q, avg_cost = case when s.q > 0 then s.c / s.q else 0 end, updated_at = now() from (select coalesce(sum(remaining_qty),0) q, coalesce(sum(remaining_qty * unit_cost + case when quantity > 0 then charges * remaining_qty / quantity else 0 end),0) c from lots where holding_id=$1) s where h.id=$1", [holding.id]);
+      await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, before) values ($1,$2,'delete','investment_txns',$3,$4)", [fam(req), req.user!.id, id, JSON.stringify({ type: t.type, quantity: t.quantity, amount: t.amount })]);
+      return void reply.code(204).send();
+    });
+  });
   app.get("/investment-txns", async (req) => { const q = z.object({ instrument_id: z.string().uuid().optional(), entity_id: z.string().uuid().optional(), holding_id: z.string().uuid().optional(), type: z.string().optional(), from: date.optional(), to: date.optional(), limit: z.coerce.number().int().min(1).max(500).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
     return withFamily(fam(req), async (c) => { const params: any[] = [q.limit, q.offset]; const conds: string[] = []; const add = (sql: string, v: any) => { params.push(v); conds.push(sql.replace("?", `$${params.length}`)); };
       if (q.instrument_id) add("t.instrument_id = ?", q.instrument_id); if (q.entity_id) add("t.entity_id = ?", q.entity_id); if (q.type) add("t.type = ?::inv_txn_type", q.type); if (q.from) add("t.txn_date >= ?", q.from); if (q.to) add("t.txn_date <= ?", q.to);
