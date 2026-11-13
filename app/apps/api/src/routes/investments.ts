@@ -26,7 +26,6 @@ export default async function investmentsRoutes(app: FastifyInstance) {
       const id = (req.params as any).id;
       const t = (await c.query("select * from investment_txns where id=$1 and family_id=$2", [id, fam(req)])).rows[0];
       if (!t) return void reply.code(404).send({ title: "Transaction not found", status: 404 });
-      if (t.source !== "manual") return void reply.code(409).send({ title: "Only a transaction entered by hand can be deleted. Statement entries are corrected by re-importing a corrected statement.", status: 409 });
       const holding = (await c.query("select id from holdings where family_id=$1 and entity_id=$2 and account_id is not distinct from $3 and instrument_id=$4 limit 1", [fam(req), t.entity_id, t.account_id, t.instrument_id])).rows[0];
       if (["sell", "redemption", "switch_out"].includes(t.type)) {
         // give the units back to the lots this sale used, and drop the gain it booked

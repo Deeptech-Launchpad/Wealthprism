@@ -57,6 +57,9 @@ export async function applyInvestmentTxn(c: any, familyId: string, entityId: str
   const accountId = await resolveAccount(c, familyId, entityId, t.account, t.provider);
   const dup = await c.query("select 1 from investment_txns where family_id=$1 and hash=$2", [familyId, t.ref]);
   if (dup.rows[0]) return "dup";
+  // a trade already entered by hand (same instrument, date and units) is confirmed by the statement, not added a second time
+  const manualMatch = (await c.query("select id from investment_txns where family_id=$1 and entity_id=$2 and instrument_id=$3 and source='manual' and type=$4 and txn_date between $5::date - 1 and $5::date + 1 and abs(quantity - $6) <= greatest(0.001, $6 * 0.005) order by abs(txn_date - $5::date) limit 1", [familyId, entityId, instrumentId, t.type === "sip" ? "sip" : t.type, t.date, t.quantity])).rows[0];
+  if (manualMatch) { await c.query("update investment_txns set source='cas', source_ref=$2, hash=$3 where id=$1", [manualMatch.id, jobId, t.ref]); return "matched"; }
   const kind = t.type === "sip" ? "sip" : t.type;
   const txnId = (await c.query("insert into investment_txns (family_id, entity_id, account_id, instrument_id, type, txn_date, quantity, price, amount, charges, source, source_ref, hash) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id",
     [familyId, entityId, accountId, instrumentId, kind, t.date, t.quantity, t.price, t.amount, t.charges, t.source, jobId, t.ref])).rows[0].id;
