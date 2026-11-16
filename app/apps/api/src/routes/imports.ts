@@ -193,6 +193,10 @@ export async function runImport(c: any, fam: string, userId: string | null, inpu
   // one job per file content per family (re-upload is a no-op)
   const prior = (await c.query("select id, status from import_jobs where family_id=$1 and error_log @> $2::jsonb and status='done'", [fam, JSON.stringify([{ sha }])])).rows[0];
   if (prior) return { code: 200, body: { id: prior.id, status: "done", duplicate_of_previous_upload: true } };
+  // Plain text that is neither a statement the app reads nor a table (no columns, one line) is refused before any job is recorded.
+  // A table the app does not recognise still goes to the column-mapping step.
+  const tabular = /[,\t|;]/.test(text) && text.split(/\r?\n/).filter((l) => l.trim()).length >= 2;
+  if (!mapping && !input.jobId && !detect(text) && !tabular) return { code: 422, body: { title: "Not a recognised statement", detail: "This is not a bank, broker or mutual-fund statement the app can read. Upload the statement file itself (CAS text, bank CSV or contract note).", status: 422 } };
   const jobId = input.jobId ?? (await c.query("insert into import_jobs (family_id, source, status, error_log) values ($1,$2,'running',$3) returning id", [fam, (declared as any) ?? "contract_note", JSON.stringify([{ sha, filename }])])).rows[0].id;
   if (input.jobId) await c.query("update import_jobs set status='running', error_log=$2, finished_at=null where id=$1", [jobId, JSON.stringify([{ sha, filename }])]);
   const log: any[] = [{ sha, filename }]; let total = 0, ok = 0, err = 0; let status = "done";
