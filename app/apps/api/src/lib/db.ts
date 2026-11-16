@@ -6,6 +6,9 @@ export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 
  *  response leave before the commit lands, or the client's next request can read the uncommitted state. server.ts opens the
  *  store per request and awaits every pending transaction in onSend. */
 export const txContext = new AsyncLocalStorage<{ pending: Promise<unknown>[]; open: number }>();
+/** Test runs only: pin the database's "today" (app_today()) to the date in FO_TEST_TODAY, so SQL and the JavaScript clock agree (see test/clock.ts).
+ *  Every place that opens its own family transaction calls this too. Without FO_TEST_TODAY it does nothing. */
+export async function pinTestDate(c: pg.PoolClient) { if (process.env.FO_TEST_TODAY) await c.query("select set_config('app.today', $1, true)", [process.env.FO_TEST_TODAY]); }
 /** Run `fn` inside a transaction with app.family_id set so Postgres RLS scopes every query. */
 export function withFamily<T>(familyId: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
   const store = txContext.getStore(); if (store) store.open++;   // counted synchronously so the onSend hook can tell "nothing in flight" without a tick
@@ -14,8 +17,7 @@ export function withFamily<T>(familyId: string, fn: (c: pg.PoolClient) => Promis
     try {
       await c.query("begin");
       await c.query("select set_config('app.family_id', $1, true)", [familyId]);
-      // test runs only: pin the database's "today" to the same date as the JavaScript clock (see test/clock.ts)
-      if (process.env.FO_TEST_TODAY) await c.query("select set_config('app.today', $1, true)", [process.env.FO_TEST_TODAY]);
+      await pinTestDate(c);
       const r = await fn(c);
       await c.query("commit");
       return r;

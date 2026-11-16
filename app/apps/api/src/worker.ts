@@ -1,6 +1,6 @@
 /** Scheduler: releases approved intents after cooling-off, expires stale ones, refreshes GL balances, flags overdue rent,
  *  and runs the market-data jobs on their IST windows. Runs every 60 s. */
-import { pool } from "./lib/db.js";
+import { pool, pinTestDate } from "./lib/db.js";
 import { fundYieldsAll } from "./jobs/wcyields.js";
 import { runFeeds, snapshotValuations, refreshPerformanceCache, stalePriceTasks, recordRun } from "./jobs/market.js";
 import { generateTasks } from "./jobs/tasks.js";
@@ -29,7 +29,7 @@ export async function tick() {
   for (const f of fams.rows) {
     const c = await pool.connect();
     try {
-      await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [f.id]);
+      await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [f.id]); await pinTestDate(c);
       const expired = await c.query("update action_intents set status='expired' where status in ('pending_approval','approved') and expires_at < now() returning id");
       for (const i of expired.rows) await resolveApprovalNotice(c, f.id, i.id, "expired").catch(() => null);
       const due = await c.query("select id from action_intents where status='approved' and (cooling_off_until is null or cooling_off_until <= now())");

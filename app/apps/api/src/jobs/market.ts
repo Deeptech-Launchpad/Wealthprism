@@ -1,7 +1,7 @@
 /** Market-data jobs: price feeds, benchmark closes, corporate actions, valuation snapshots, TWR cache, stale-price tasks.
  *  Fetching is injected (`fetchText`) so the ingest functions run on fixtures in tests and on the live feeds in the worker. */
 import type pg from "pg";
-import { pool } from "../lib/db.js";
+import { pool, pinTestDate } from "../lib/db.js";
 import { parseAmfiNavAll, parseNseBhavcopy, parseNseCorporateActions, parseNseIndices, parseBhavcopy } from "@fo/parsers";
 import { twr, xirr, xirrFlowsFor, type Valuation, type Flow } from "@fo/finance";
 import { applyCorporateAction } from "../lib/corporateActions.js";
@@ -115,7 +115,7 @@ export async function ingestCorporateActions(json: any) {
 async function families(): Promise<string[]> { return (await pool.query("select id from families order by created_at")).rows.map((r) => r.id); }
 export async function withFamilyClient<T>(familyId: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
   const c = await pool.connect();
-  try { await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [familyId]); const r = await fn(c); await c.query("commit"); return r; }
+  try { await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [familyId]); await pinTestDate(c); const r = await fn(c); await c.query("commit"); return r; }
   catch (e) { await c.query("rollback"); throw e; } finally { c.release(); }
 }
 

@@ -4,7 +4,7 @@
 import { syncHoldingReceipts } from "../lib/holdingreceipts.js";
 import type pg from "pg";
 import { allocationBandDrafts, allocationReviewDrafts } from "../lib/allocation.js";
-import { pool } from "../lib/db.js";
+import { pool, pinTestDate } from "../lib/db.js";
 import { notifyTask } from "../lib/notify.js";
 import { generateRentSchedule, fyOf } from "@fo/finance";
 import { emitEvent } from "../lib/opendata.js";
@@ -232,7 +232,7 @@ export async function generateTasks(today?: string) {
   let created = 0, closed = 0;
   for (const f of fams) {
     const c = await pool.connect();
-    try { await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [f.id]); const r = await generateTasksFor(c, f.id, today); created += r.created; closed += r.closed; await c.query("commit"); }
+    try { await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [f.id]); await pinTestDate(c); const r = await generateTasksFor(c, f.id, today); created += r.created; closed += r.closed; await c.query("commit"); }
     catch (e) { await c.query("rollback"); console.error("tasks.generate", f.id, e); } finally { c.release(); }
   }
   return { rows: created, closed, note: `${created} raised, ${closed} closed` };

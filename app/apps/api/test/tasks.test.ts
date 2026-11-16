@@ -22,6 +22,9 @@ beforeAll(async () => {
   const login = (await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: "arjun@example.com", password: "Prototype!2026" } })).json();
   token = login.access_token; userId = login.user.id;
   setSenders({ push: async (m) => { pushed.push(...m); return { ok: m.length, failed: 0 }; }, email: async (to, subject, text) => { mailed.push({ to, subject, text }); return true; } });
+  // Earlier test files call routes that generate tasks with the real date (the deposit routes do), which leaves GST returns and tasks for September
+  // in the shared database. The seed has none, and this file creates them itself on 2 Oct, so start from the seed.
+  await run(async (c) => { await c.query("delete from tasks where source_type='gst_return' and source_id in (select id from gst_returns where period_month >= '2026-09-01')"); await c.query("delete from gst_returns where period_month >= '2026-09-01'"); });
   await run(async (c) => {
     for (const t of TABLES) before[t] = (await c.query(`select id::text k from ${t}`)).rows.map((r) => r.k);
     rentBefore = (await c.query("select id, status, received_amount from rent_schedule")).rows;
