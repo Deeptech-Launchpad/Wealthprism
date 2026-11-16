@@ -5,7 +5,7 @@ import { api, apiUpload, apiJson } from "../lib/api";
 import { Card, Pill, fmtDate } from "../components";
 
 type Kind = "statement" | "bank";
-interface JobResult { id: string; status: string; rows_total?: number; rows_ok?: number; rows_error?: number; errors?: { row?: number; message: string }[]; duplicates?: number; rent_matched?: number | null; detected_headers?: string[]; duplicate_of_previous_upload?: boolean; status_code: number }
+interface JobResult { id: string; status: string; title?: string; detail?: string; rows_total?: number; rows_ok?: number; rows_error?: number; errors?: { row?: number; message: string }[]; duplicates?: number; rent_matched?: number | null; detected_headers?: string[]; duplicate_of_previous_upload?: boolean; status_code: number }
 
 const REQUIRED = [["date", "Trade date"], ["instrument", "Instrument / scrip"], ["side", "Buy / sell"], ["quantity", "Quantity"], ["price", "Price / rate"]] as const;
 const OPTIONAL = [["isin", "ISIN"], ["ref", "Reference (contract note no.)"]] as const;
@@ -96,7 +96,7 @@ export function ImportPanel({ kind = "statement", bankAccountId, onDone }: { kin
       {error && <div className="err">{error}</div>}
       {result && result.status_code !== 202 && (
         <div className="attn" style={{ borderBottom: 0 }}>
-          <Pill tone={result.status === "done" ? "teal" : result.status === "failed" ? "red" : "amber"}>{result.duplicate_of_previous_upload ? "already imported" : result.status}</Pill>
+          <Pill tone={result.title ? "red" : result.status === "done" ? "teal" : result.status === "failed" ? "red" : "amber"}>{result.duplicate_of_previous_upload ? "already imported" : result.title ?? result.status}</Pill>{result.detail && <div className="small" style={{ color: "var(--red)", marginTop: 4 }}>{result.detail}</div>}
           <span className="small">{result.duplicate_of_previous_upload ? "This exact file was imported before — nothing changed." : `${result.rows_ok ?? 0} of ${result.rows_total ?? 0} rows applied${result.rows_error ? `, ${result.rows_error} errors` : ""}`}</span>
           {!!result.errors?.length && <span className="small mute">{result.errors.slice(0, 3).map((l) => (l.row ? `row ${l.row}: ` : "") + l.message).join(" · ")}</span>}
           {!!result.duplicates && <span className="small mute">{result.duplicates} already recorded</span>}
