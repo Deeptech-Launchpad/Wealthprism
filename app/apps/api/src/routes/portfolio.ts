@@ -136,9 +136,9 @@ export default async function routes(app: FastifyInstance) {
 
   app.get("/working-capital/summary", async (req) => withFamily(req.family!.familyId, async (c) => {
     const cash = Number((await c.query("select coalesce(sum(balance),0) v from bank_accounts where deleted_at is null and type in ('savings','current')")).rows[0].v);
-    const outflows = (await c.query("select due_date, amount from committed_outflows where status = 'pending' and due_date >= current_date")).rows.map((r: any) => ({ dueDate: new Date(r.due_date).toISOString().slice(0, 10), amount: Number(r.amount) }));
+    const outflows = (await c.query("select due_date, amount from committed_outflows where status = 'pending' and due_date >= app_today()")).rows.map((r: any) => ({ dueDate: new Date(r.due_date).toISOString().slice(0, 10), amount: Number(r.amount) }));
     const s = (await c.query("select float_days, buffer_months, idle_days, instrument_prefs from wc_settings")).rows[0] ?? { float_days: 60, buffer_months: 1, idle_days: 30 };
-    const avg = Number((await c.query("select coalesce(-sum(amount),0)/3 v from bank_txns where amount < 0 and txn_date > current_date - 90 and link_type <> 'transfer'")).rows[0].v);
+    const avg = Number((await c.query("select coalesce(-sum(amount),0)/3 v from bank_txns where amount < 0 and txn_date > app_today() - 90 and link_type <> 'transfer'")).rows[0].v);
     const input = { cash, outflows, floatDays: +s.float_days, avgMonthlyOutflow: avg, bufferMonths: +s.buffer_months, asOf: new Date().toISOString().slice(0, 10) };
     const rf = requiredFloat(input), ex = deployableExcess(input);
     return { cash_total: money(cash), required_float: money(rf), float_days: +s.float_days, deployable_excess: money(ex), idle_days: +s.idle_days, drag_per_year: money(ex * 0.045), inflation_pct: Number(s.instrument_prefs?.inflation_pct ?? 6), inflation_loss_per_year: money(ex * Number(s.instrument_prefs?.inflation_pct ?? 6) / 100), committed_outflows: outflows.length };
@@ -165,13 +165,13 @@ export default async function routes(app: FastifyInstance) {
     // balance-sheet completeness (FO-90..92): lifestyle assets and policy values count, liabilities are deducted per entity
     const nw = await netWorth(c, req.family!.familyId); for (const e of nw.by_entity) { byEntity[e.entity_id] ??= { name: e.name, value: 0 }; byEntity[e.entity_id].value = Number(e.net_worth); }
     const netWorth_ = Number(nw.net_worth);
-    const rent = (await c.query("select coalesce(sum(expected_rent),0) due, count(*) filter (where status='received') received, count(*) filter (where status='overdue') overdue from rent_schedule where period_month = date_trunc('month', current_date)::date")).rows[0];
+    const rent = (await c.query("select coalesce(sum(expected_rent),0) due, count(*) filter (where status='received') received, count(*) filter (where status='overdue') overdue from rent_schedule where period_month = date_trunc('month', app_today())::date")).rows[0];
     const gains = (await c.query("select coalesce(sum(gain),0) g from realized_gains where fy = '2026-27'")).rows[0];
     const attention = (await c.query("select t.*, e.name as entity_name from tasks t left join entities e on e.id = t.entity_id where t.status = 'open' order by t.severity, t.due_date nulls last limit 5")).rows;
     const v = await bucketValues(c, req.family!.familyId);
     const t = await bucketTargets(c, req.family!.familyId, null);
     // 12 month-end snapshots of the family's investment value (valuations.daily job) and the cached since-inception XIRR
-    const snaps = (await c.query(`select distinct on (to_char(as_of,'YYYY-MM')) to_char(as_of,'YYYY-MM') as month, value from valuations_daily where scope_type='family' and scope_id=$1 and as_of >= (current_date - interval '13 months') order by to_char(as_of,'YYYY-MM'), as_of desc`, [req.family!.familyId])).rows;
+    const snaps = (await c.query(`select distinct on (to_char(as_of,'YYYY-MM')) to_char(as_of,'YYYY-MM') as month, value from valuations_daily where scope_type='family' and scope_id=$1 and as_of >= (app_today() - interval '13 months') order by to_char(as_of,'YYYY-MM'), as_of desc`, [req.family!.familyId])).rows;
     const trend = snaps.slice(-12).map((r) => ({ month: r.month, value: money(r.value) }));
     const prev = snaps.length >= 2 ? Number(snaps[snaps.length - 2].value) : null;
     const last = snaps.length ? Number(snaps[snaps.length - 1].value) : null;

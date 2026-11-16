@@ -13,7 +13,7 @@ const get = async (url: string, t = owner) => { const r = await app.inject({ url
 const send = async (method: "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload: any = {}, t = owner) => { const r = await app.inject({ method, url: `/api/v1${url}`, headers: h(t), payload }); return { code: r.statusCode, body: r.statusCode === 204 ? null : r.json() }; };
 
 const TABLES = ["investment_policies", "policy_versions", "policy_allocations", "policy_risk_limits", "policy_compliance", "policy_reviews", "risk_questionnaire_responses", "asset_class_targets", "execution_policies", "ips_rules", "glide_paths", "bucket_targets", "tasks", "notifications", "action_intents", "connectors", "goal_links"];
-const before: Record<string, string[]> = {}; let versionsBefore: any[] = [], policiesBefore: any[] = [], flagsBefore: any[] = [], reviewsBefore: any[] = [];
+const before: Record<string, string[]> = {}; let versionsBefore: any[] = [], policiesBefore: any[] = [], flagsBefore: any[] = [], reviewsBefore: any[] = [], entitiesBefore: any[] = [];
 beforeAll(async () => {
   app = buildApp(); await app.ready();
   const login = async (email: string) => (await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password: "Prototype!2026" } })).json().access_token;
@@ -24,10 +24,14 @@ beforeAll(async () => {
     policiesBefore = (await c.query("select id, current_version_id, next_review_on, review_every_months, name from investment_policies")).rows;
     flagsBefore = (await c.query("select 'ips_rules' t, id, active from ips_rules union all select 'execution_policies', id, active from execution_policies")).rows;
     reviewsBefore = (await c.query("select * from policy_reviews")).rows;
+    // The seeded entities are stamped with the moment the database was seeded, which can be later than a policy's effective date, and the scheduler would
+    // open a "new entity" review. These tests assume the entities existed from the start, so backdate them and put them back afterwards.
+    entitiesBefore = (await c.query("select id, created_at from entities")).rows; await c.query("update entities set created_at = '2026-01-01' where created_at > '2026-01-01'");
   });
 });
 afterAll(async () => {
   await withFamily(FAMILY, async (c) => {
+    for (const e of entitiesBefore) await c.query("update entities set created_at=$2 where id=$1", [e.id, e.created_at]);
     // reviews first (they point at tasks and versions), then tasks, then the policy tree
     await c.query("delete from policy_reviews where id::text <> all($1::text[])", [before.policy_reviews]);
     for (const r of reviewsBefore) await c.query("update policy_reviews set status=$2, outcome=$3, resulting_version_id=$4, note=$5, findings=$6, completed_at=$7, started_at=$8, task_id=$9, reviewer_user_id=$10 where id=$1", [r.id, r.status, r.outcome, r.resulting_version_id, r.note, r.findings, r.completed_at, r.started_at, r.task_id, r.reviewer_user_id]);
@@ -182,7 +186,7 @@ describe("risk metrics and reviews (FO-143, FO-145)", () => {
   });
   it("schedules a review 30 days ahead, opens a trigger review for a breach persisting 30 days with pre-filled findings, and records outcomes", async () => {
     const none = (await send("POST", "/policy-reviews/run", { today: "2026-10-01" })).body; expect(none.rows).toBe(0); // retirement's quarterly review is already seeded as due
-    await withFamily(FAMILY, async (c) => { for (let d = 40; d >= 0; d -= 5) await c.query("insert into policy_compliance (family_id, policy_version_id, as_of, overall, checks, breaches, warnings) values ($1,$2,current_date - $3::int,'breach','[{\"kind\":\"allocation\",\"key\":\"asset_class:equity\",\"target\":\"45% (35–55)\",\"actual\":\"67%\",\"status\":\"breach\"}]',1,0) on conflict (policy_version_id, as_of) do update set overall='breach'", [FAMILY, V_RET1, d]); });
+    await withFamily(FAMILY, async (c) => { for (let d = 40; d >= 0; d -= 5) await c.query("insert into policy_compliance (family_id, policy_version_id, as_of, overall, checks, breaches, warnings) values ($1,$2,app_today() - $3::int,'breach','[{\"kind\":\"allocation\",\"key\":\"asset_class:equity\",\"target\":\"45% (35–55)\",\"actual\":\"67%\",\"status\":\"breach\"}]',1,0) on conflict (policy_version_id, as_of) do update set overall='breach'", [FAMILY, V_RET1, d]); });
     const run = (await send("POST", "/policy-reviews/run", {})).body; const trig = run.reviews.find((r: any) => r.policy_id === P_RET && r.trigger_reason === "breach_persisting");
     expect(trig).toBeTruthy(); expect(trig.findings.compliance_history.length).toBeGreaterThanOrEqual(8); expect(trig.findings.drift[0].key).toBe("asset_class:equity"); expect(trig.findings.goal_progress.name).toBe("Retirement income floor"); expect(trig.findings.summary).toMatch(/snapshots compliant/);
     const task = (await get("/tasks?status=open&module=policy")).body.find((t: any) => t.source_id === trig.id); expect(task.title).toMatch(/breach persisting 30 days/);

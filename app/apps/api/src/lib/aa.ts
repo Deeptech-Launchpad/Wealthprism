@@ -146,7 +146,7 @@ export async function handleCallback(payload: any) {
     const cur = (await c.query("select * from aa_consents where id=$1", [found.id])).rows[0]; const accounts: any[] = payload.accounts ?? payload.Accounts ?? [];
     if (status === "ACTIVE" || status === "APPROVED" || status === "READY") {
       const expires = payload.consentExpiry ? String(payload.consentExpiry).slice(0, 10) : iso(cur.expires_on) ?? addMonths(today(), 12);
-      await c.query("update aa_consents set status='active', consent_id=coalesce($2, consent_id), granted_on=coalesce(granted_on, current_date), expires_on=$3, accounts=$4, next_fetch_at=now(), fetch_error=null, updated_at=now() where id=$1", [found.id, consentId, expires, JSON.stringify(accounts)]);
+      await c.query("update aa_consents set status='active', consent_id=coalesce($2, consent_id), granted_on=coalesce(granted_on, app_today()), expires_on=$3, accounts=$4, next_fetch_at=now(), fetch_error=null, updated_at=now() where id=$1", [found.id, consentId, expires, JSON.stringify(accounts)]);
       const linked: string[] = [];
       for (const a of accounts) {
         const last4 = String(a.maskedAccNumber ?? a.masked ?? "").replace(/\D/g, "").slice(-4); if (!last4) continue;
@@ -162,7 +162,7 @@ export async function handleCallback(payload: any) {
     }
     const map: Record<string, string> = { REJECTED: "rejected", REVOKED: "revoked", EXPIRED: "expired", PAUSED: "paused", DENIED: "rejected" };
     const next = map[status]; if (!next) throw new BankingError(422, `Unknown consent status ${status || "(blank)"}`);
-    await c.query("update aa_consents set status=$2, revoked_on=case when $2 in ('revoked','expired') then current_date else revoked_on end, updated_at=now() where id=$1", [found.id, next]);
+    await c.query("update aa_consents set status=$2, revoked_on=case when $2 in ('revoked','expired') then app_today() else revoked_on end, updated_at=now() where id=$1", [found.id, next]);
     if (next === "revoked" || next === "expired") { const t = (await c.query("insert into tasks (family_id, entity_id, module, title, reason, severity, source_type, source_id, verification) values ($1,$2,'banking',$3,$4,2,'aa_consent',$5,'na') on conflict do nothing returning *", [found.family_id, cur.entity_id, `Account Aggregator consent ${next} — re-link the bank accounts`, `${cur.provider} reported the consent as ${next}; balances and transactions stop updating until a new consent is granted`, found.id])).rows[0]; if (t) await notifyTask(c, t).catch(() => null); }
     return { id: found.id, status: next, linked: [] };
   });
@@ -214,7 +214,7 @@ export async function syncAccount(c: pg.PoolClient, familyId: string, bankAccoun
 export async function syncDueAll(opts: { provider?: AaProvider } = {}) {
   const fams = (await pool.query("select id from families")).rows; let consents = 0, txns = 0, failed = 0;
   for (const f of fams) {
-    const due = await withFamily(f.id, async (c) => (await c.query("select id from aa_consents where status='active' and (next_fetch_at is null or next_fetch_at <= now()) and (expires_on is null or expires_on >= current_date)")).rows);
+    const due = await withFamily(f.id, async (c) => (await c.query("select id from aa_consents where status='active' and (next_fetch_at is null or next_fetch_at <= now()) and (expires_on is null or expires_on >= app_today())")).rows);
     for (const d of due) { try { const r = await withFamily(f.id, (c) => syncConsent(c, f.id, d.id, opts)); consents++; txns += r.txns_new; } catch { failed++; } }
   }
   return { rows: txns, note: `${consents} consent${consents === 1 ? "" : "s"} fetched, ${txns} new transactions${failed ? `, ${failed} failed` : ""}` };
@@ -222,7 +222,7 @@ export async function syncDueAll(opts: { provider?: AaProvider } = {}) {
 export async function revokeConsent(c: pg.PoolClient, familyId: string, id: string, userId: string) {
   const cur = (await c.query("select * from aa_consents where id=$1 and family_id=$2", [id, familyId])).rows[0]; if (!cur) throw new BankingError(404, "Consent not found");
   const p = providerFor(cur.provider); if (p.revoke) await p.revoke(cur).catch(() => null);
-  const r = (await c.query("update aa_consents set status='revoked', revoked_on=current_date, updated_at=now() where id=$1 returning *", [id])).rows[0];
+  const r = (await c.query("update aa_consents set status='revoked', revoked_on=app_today(), updated_at=now() where id=$1 returning *", [id])).rows[0];
   await c.query("update bank_accounts set sync_mode='manual' where aa_consent_id=$1", [id]);
   await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, before, after) values ($1,$2,'aa.revoke','aa_consents',$3,$4,$5)", [familyId, userId, id, JSON.stringify({ status: cur.status }), JSON.stringify({ status: "revoked" })]);
   return consentView(r);

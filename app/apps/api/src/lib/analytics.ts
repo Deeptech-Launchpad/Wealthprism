@@ -71,7 +71,7 @@ export const RULE_CODES = ["max_single_issuer", "max_single_manager", "min_credi
 export async function evaluateIpsRules(c: pg.PoolClient, familyId: string, opts: { notify?: boolean; day?: string } = {}) {
   const day = opts.day ?? today(); const rules = (await c.query("select * from ips_rules where family_id=$1 and active", [familyId])).rows; const out: any[] = [];
   const posAll = await positions(c, familyId); const liabilities = Number((await c.query("select coalesce(sum(outstanding),0) v from liabilities where family_id=$1 and status='active' and deleted_at is null", [familyId])).rows[0].v);
-  const wc = await floatFor(c, familyId, day); const avgOut = Number((await c.query("select coalesce(avg(m),0) v from (select date_trunc('month', txn_date) mo, sum(-amount) m from bank_txns where family_id=$1 and amount < 0 and txn_date >= current_date - 180 group by 1) x", [familyId])).rows[0].v);
+  const wc = await floatFor(c, familyId, day); const avgOut = Number((await c.query("select coalesce(avg(m),0) v from (select date_trunc('month', txn_date) mo, sum(-amount) m from bank_txns where family_id=$1 and amount < 0 and txn_date >= app_today() - 180 group by 1) x", [familyId])).rows[0].v);
   for (const rule of rules) {
     const pos = rule.entity_id ? posAll.filter((p) => p.entity_id === rule.entity_id) : posAll; const total = pos.reduce((s, p) => s + p.value, 0); const invest = pos.filter((p) => p.type !== "bank_account" && p.type !== "property");
     const pct = (rows: { key: string; pct: number }[], k: (key: string) => boolean) => rows.filter((r) => k(r.key)).reduce((s, r) => s + r.pct, 0);
@@ -199,7 +199,7 @@ export async function resolveReconciliation(c: pg.PoolClient, familyId: string, 
   if (action === "accept_source") {
     if (it.holding_id && it.source_qty != null) { const h = (await c.query("select * from holdings where id=$1", [it.holding_id])).rows[0]; before = { quantity: Number(h.quantity) }; const delta = Number(it.source_qty) - Number(h.quantity);
       await c.query("update holdings set quantity=$2, updated_at=now() where id=$1", [h.id, Number(it.source_qty)]);
-      if (delta > 0) await c.query("insert into lots (family_id, holding_id, buy_date, quantity, remaining_qty, unit_cost, charges) values ($1,$2,current_date,$3,$3,$4,0)", [familyId, h.id, delta, Number(h.avg_cost)]);
+      if (delta > 0) await c.query("insert into lots (family_id, holding_id, buy_date, quantity, remaining_qty, unit_cost, charges) values ($1,$2,app_today(),$3,$3,$4,0)", [familyId, h.id, delta, Number(h.avg_cost)]);
       else if (delta < 0) { let left = -delta; for (const l of (await c.query("select id, remaining_qty from lots where holding_id=$1 and remaining_qty > 0 order by buy_date desc", [h.id])).rows) { const take = Math.min(left, Number(l.remaining_qty)); await c.query("update lots set remaining_qty=remaining_qty-$2 where id=$1", [l.id, take]); left -= take; if (left <= 0) break; } }
       after = { quantity: Number(it.source_qty) }; }
     else if (it.bank_account_id && it.source_amt != null) { const b = (await c.query("select balance from bank_accounts where id=$1", [it.bank_account_id])).rows[0]; before = { balance: Number(b.balance) }; await c.query("update bank_accounts set balance=$2, balance_as_of=now() where id=$1", [it.bank_account_id, Number(it.source_amt)]); after = { balance: Number(it.source_amt) }; }

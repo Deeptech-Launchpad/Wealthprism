@@ -54,7 +54,7 @@ export async function syncHoldingReceipts(c: pg.PoolClient, familyId: string): P
     const wanted = new Set(want.map((w) => key(w.kind, w.due)));
     for (const r of open) if (!wanted.has(key(r.kind, r.due))) { await c.query("update holding_receipts set status='cancelled' where id=$1", [r.id]); changed++; }
   }
-  await c.query("update holding_receipts set status='overdue' where family_id=$1 and status='expected' and due_date < current_date", [familyId]);
+  await c.query("update holding_receipts set status='overdue' where family_id=$1 and status='expected' and due_date < app_today()", [familyId]);
   return changed;
 }
 

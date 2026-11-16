@@ -1,7 +1,7 @@
 /** Notifications: in-app inbox rows for every family member, Expo push for urgent tasks, and the daily e-mail digest.
  *  Delivery adapters are injectable; without credentials they log, so nothing is silently lost in dev. */
 import type pg from "pg";
-import { pool } from "./db.js";
+import { pool, pinTestDate } from "./db.js";
 import { emitEvent } from "./opendata.js";
 
 export interface TaskLike { id: string; family_id: string; module: string; title: string; reason?: string | null; severity: number; due_date?: string | Date | null; amount?: string | number | null; entity_id?: string | null }
@@ -100,7 +100,7 @@ export async function sendDigests(now = new Date()) {
     for (const f of fams) {
       const c = await pool.connect();
       try {
-        await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [f.id]);
+        await c.query("begin"); await c.query("select set_config('app.family_id',$1,true)", [f.id]); await pinTestDate(c);
         const tasks = (await c.query("select module, title, severity, due_date, amount from tasks where status='open' order by module, severity, due_date nulls last")).rows;
         await c.query("commit");
         if (!tasks.length) continue;

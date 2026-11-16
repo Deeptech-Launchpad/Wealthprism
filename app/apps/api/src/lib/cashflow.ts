@@ -50,7 +50,7 @@ export async function cashflowSummary(c: pg.PoolClient, familyId: string) {
   }
 
   // 6. property running costs: last 12 months of maintenance, repairs, society and similar, averaged per month (automatic)
-  for (const r of (await c.query("select p.id, coalesce(sum(e.amount),0) total from properties p left join property_expenses e on e.property_id=p.id and not e.capital_improvement and e.category <> 'loan_interest' and e.expense_date >= (current_date - interval '12 months') where p.family_id=$1 and p.deleted_at is null group by p.id", [familyId])).rows) {
+  for (const r of (await c.query("select p.id, coalesce(sum(e.amount),0) total from properties p left join property_expenses e on e.property_id=p.id and not e.capital_improvement and e.category <> 'loan_interest' and e.expense_date >= (app_today() - interval '12 months') where p.family_id=$1 and p.deleted_at is null group by p.id", [familyId])).rows) {
     if (num(r.total) <= 0) continue;
     lines.push({ id: r.id, group: "expense", source: "property", label: "Running costs (last 12 months ÷ 12)", detail: "from the property expenses", frequency: "monthly", monthly: r2(num(r.total) / 12), auto: true, linked_type: "property", linked_id: r.id });
   }

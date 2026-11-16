@@ -143,7 +143,7 @@ export async function adequacy(c: pg.PoolClient, familyId: string) {
   const ents = (await c.query("select id, name, type from entities where family_id=$1 and deleted_at is null", [familyId])).rows; const policies = (await c.query("select * from insurance_policies where family_id=$1 and deleted_at is null and status='active'", [familyId])).rows;
   const liabilities = (await c.query("select entity_id, sum(outstanding) v from liabilities where family_id=$1 and status='active' and deleted_at is null group by entity_id", [familyId])).rows;
   const goals = (await c.query("select entity_id, name, amount_today, inflation_pct, target_year, funded_pct from goals where family_id=$1 and status='active'", [familyId])).rows;
-  const spend = Number((await c.query("select coalesce(avg(m),0) v from (select date_trunc('month', txn_date) mo, sum(-amount) m from bank_txns where family_id=$1 and amount < 0 and txn_date >= current_date - 180 group by 1) x", [familyId])).rows[0].v);
+  const spend = Number((await c.query("select coalesce(avg(m),0) v from (select date_trunc('month', txn_date) mo, sum(-amount) m from bank_txns where family_id=$1 and amount < 0 and txn_date >= app_today() - 180 group by 1) x", [familyId])).rows[0].v);
   const year = new Date().getUTCFullYear();
   const life = ents.filter((e) => e.type === "individual").map((e) => {
     const covers = policies.filter((p) => ["term_life", "endowment", "ulip"].includes(p.kind) && (p.entity_id === e.id || (p.covers_members ?? []).includes(e.name) || p.life_assured === e.name)).map((p) => ({ kind: p.kind, sum_assured: Number(p.sum_assured), status: p.status }));

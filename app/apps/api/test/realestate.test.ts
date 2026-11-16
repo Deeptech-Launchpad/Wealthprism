@@ -160,13 +160,13 @@ describe("property tax, expenses and GST", () => {
   });
   it("lists returns for the FY and marks one filed, closing its task; late filings are labelled", async () => {
     const list = (await get("/gst/returns?fy=2026-27")).body;
-    const due = list.find((r: any) => r.status === "due" && r.form === "gstr3b" && r.gstin === "33AAAAA1234H1Z5");
+    const due = list.find((r: any) => r.status === "due" && r.form === "gstr3b" && r.gstin === "33AAAAA1234H1Z5" && r.period_month === "2026-08");
     expect(due).toBeTruthy(); expect(due.period_month).toBe("2026-08"); expect(due.due_date).toBe("2026-09-20"); expect(due.tax_amount).toBe("513.00");
     await withFamily(FAMILY, async (c) => c.query("insert into tasks (family_id, module, title, reason, severity, source_type, source_id) values ($1,'real_estate','File GSTR-3B','test',2,'gst_return',$2)", [FAMILY, due.id]));
     const filed = await send("PATCH", `/gst/returns/${due.id}`, { filed_on: "2026-09-12", arn: "AA330926000123X" });
     expect(filed.body.status).toBe("filed"); expect(filed.body.arn).toBe("AA330926000123X");
     expect((await get("/tasks?status=done")).body.some((x: any) => x.source_id === due.id)).toBe(true);
-    const other = list.find((r: any) => r.status === "due" && r.form === "gstr3b" && r.gstin !== "33AAAAA1234H1Z5");
+    const other = list.find((r: any) => r.status === "due" && r.form === "gstr3b" && r.gstin !== "33AAAAA1234H1Z5" && r.period_month === "2026-08");
     expect((await send("PATCH", `/gst/returns/${other.id}`, { filed_on: "2026-09-25" })).body.status).toBe("late");
     // viewers cannot write anything here
     const viewer = (await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: "ca@example.com", password: "Prototype!2026" } })).json().access_token;

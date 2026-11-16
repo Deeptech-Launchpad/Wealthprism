@@ -180,7 +180,7 @@ export default async function routes(app: FastifyInstance) {
         [fam, b.property_id, b.tenant_id, b.entity_gstin_id ?? null, b.start_date, b.end_date, b.rent, b.due_day, b.grace_days, b.escalation_pct, b.escalation_every_months ?? null, b.deposit, b.gst_applicable, gstRate, b.tds_applicable, b.tds_rate, b.notice_days, b.document_id ?? null, b.lease_kind])).rows[0];
       // a pure lump-sum lease has no monthly rent, so there is no schedule to generate
       const rows = b.rent > 0 ? generateRentSchedule({ startDate: b.start_date, endDate: b.end_date, rent: b.rent, dueDay: b.due_day, escalationPct: b.escalation_pct, escalationEveryMonths: b.escalation_every_months ?? null, gstApplicable: b.gst_applicable, gstRate, tdsApplicable: b.tds_applicable, tdsRate: b.tds_rate }) : [];
-      for (const r of rows) await c.query("insert into rent_schedule (family_id, lease_id, period_month, expected_rent, expected_gst, expected_tds, due_date, status) values ($1,$2,$3,$4,$5,$6,$7, case when $7::date < current_date then 'overdue'::rent_status else 'due'::rent_status end)", [fam, l.id, r.periodMonth, r.expectedRent, r.expectedGst, r.expectedTds, r.dueDate]);
+      for (const r of rows) await c.query("insert into rent_schedule (family_id, lease_id, period_month, expected_rent, expected_gst, expected_tds, due_date, status) values ($1,$2,$3,$4,$5,$6,$7, case when $7::date < app_today() then 'overdue'::rent_status else 'due'::rent_status end)", [fam, l.id, r.periodMonth, r.expectedRent, r.expectedGst, r.expectedTds, r.dueDate]);
       await syncLeaseRefunds(c, fam);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'create','leases',$3,$4)", [fam, req.user!.id, l.id, JSON.stringify({ ...b, schedule_rows: rows.length })]);
       return void reply.code(201).send({ ...leaseView((await c.query(`${LEASE_SQL} where l.id=$1`, [l.id])).rows[0]), schedule_rows: rows.length });
@@ -202,9 +202,9 @@ export default async function routes(app: FastifyInstance) {
         const from = b.effective_from ?? `${today().slice(0, 7)}-01`;
         await c.query("delete from rent_schedule where lease_id=$1 and period_month >= $2 and status in ('due','overdue')", [id, from]);
         const rows = generateRentSchedule({ startDate: iso(n.start_date)!, endDate: iso(n.end_date)!, rent: Number(n.rent), dueDay: n.due_day, escalationPct: Number(n.escalation_pct), escalationEveryMonths: n.escalation_every_months, gstApplicable: n.gst_applicable, gstRate: Number(n.gst_rate), tdsApplicable: n.tds_applicable, tdsRate: Number(n.tds_rate) }).filter((r) => r.periodMonth >= from);
-        for (const r of rows) { const ins = await c.query("insert into rent_schedule (family_id, lease_id, period_month, expected_rent, expected_gst, expected_tds, due_date, status) values ($1,$2,$3,$4,$5,$6,$7, case when $7::date < current_date then 'overdue'::rent_status else 'due'::rent_status end) on conflict (lease_id, period_month) do nothing", [fam, id, r.periodMonth, r.expectedRent, r.expectedGst, r.expectedTds, r.dueDate]); regenerated += ins.rowCount ?? 0; }
+        for (const r of rows) { const ins = await c.query("insert into rent_schedule (family_id, lease_id, period_month, expected_rent, expected_gst, expected_tds, due_date, status) values ($1,$2,$3,$4,$5,$6,$7, case when $7::date < app_today() then 'overdue'::rent_status else 'due'::rent_status end) on conflict (lease_id, period_month) do nothing", [fam, id, r.periodMonth, r.expectedRent, r.expectedGst, r.expectedTds, r.dueDate]); regenerated += ins.rowCount ?? 0; }
       }
-      if (b.status && b.status !== "active") await c.query("delete from rent_schedule where lease_id=$1 and status in ('due','overdue') and period_month > date_trunc('month', current_date)", [id]);
+      if (b.status && b.status !== "active") await c.query("delete from rent_schedule where lease_id=$1 and status in ('due','overdue') and period_month > date_trunc('month', app_today())", [id]);
       await syncLeaseRefunds(c, fam);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'update','leases',$3,$4)", [fam, req.user!.id, id, JSON.stringify(b)]);
       return { ...leaseView((await c.query(`${LEASE_SQL} where l.id=$1`, [id])).rows[0]), regenerated };
@@ -223,7 +223,7 @@ export default async function routes(app: FastifyInstance) {
       const amount = b.refunded_amount ?? owed;
       if (amount < 0 || amount > owed + 0.005) return void reply.code(422).send({ title: `The refund cannot be more than the ${owed} held`, status: 422 });
       await c.query("update leases set status='ended', refunded_on=$2, refunded_amount=$3 where id=$1", [id, owed > 0 ? (b.refunded_on ?? today()) : null, owed > 0 ? amount : null]);
-      await c.query("delete from rent_schedule where lease_id=$1 and status in ('due','overdue') and period_month > date_trunc('month', current_date)", [id]);
+      await c.query("delete from rent_schedule where lease_id=$1 and status in ('due','overdue') and period_month > date_trunc('month', app_today())", [id]);
       await syncLeaseRefunds(c, req.family!.familyId);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, after) values ($1,$2,'update','leases',$3,$4)", [req.family!.familyId, req.user!.id, id, JSON.stringify({ ended: true, ...b })]);
       return leaseView((await c.query(`${LEASE_SQL} where l.id=$1`, [id])).rows[0]);
@@ -232,7 +232,7 @@ export default async function routes(app: FastifyInstance) {
 
   // ---------- rent ledger ----------
   const RENT_SQL = `select rs.id, rs.lease_id, p.id property_id, p.name as property, t.name as tenant, t.phone tenant_phone, t.email tenant_email, rs.period_month, rs.due_date, rs.expected_rent, rs.expected_gst, rs.expected_tds,
-      rs.received_amount, rs.received_on, rs.bank_txn_id, rs.status, greatest(0, (current_date - rs.due_date)) as overdue_days, l.gst_applicable
+      rs.received_amount, rs.received_on, rs.bank_txn_id, rs.status, greatest(0, (app_today() - rs.due_date)) as overdue_days, l.gst_applicable
       from rent_schedule rs join leases l on l.id = rs.lease_id join properties p on p.id = l.property_id join tenants t on t.id = l.tenant_id`;
   const rentView = (r: any) => ({ ...r, period_month: iso(r.period_month)?.slice(0, 7), due_date: iso(r.due_date), received_on: iso(r.received_on), expected_rent: money(r.expected_rent), expected_gst: money(r.expected_gst), expected_tds: money(r.expected_tds), received_amount: money(r.received_amount), net_due: money(Number(r.expected_rent) + Number(r.expected_gst) - Number(r.expected_tds)), overdue_days: Number(r.overdue_days) });
   app.get("/rent-schedule", async (req) => withFamily(req.family!.familyId, async (c) => {

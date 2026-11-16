@@ -58,7 +58,7 @@ export default async function routes(app: FastifyInstance) {
     return withFamily(fam(req), async (c) => {
       let parentVersion = 0;
       if (b.parent_scenario_id) { const p = (await c.query("select version from plan_scenarios where id=$1 and deleted_at is null", [b.parent_scenario_id])).rows[0]; if (!p) return void reply.code(404).send({ title: "Parent scenario not found", status: 404 }); parentVersion = Number(p.version); }
-      const s = (await c.query("insert into plan_scenarios (family_id, name, description, parent_scenario_id, version, base_date, horizon_fys, entity_scope, assumptions, created_by) values ($1,$2,$3,$4,$5,coalesce($6::date, current_date),$7,$8,$9,$10) returning *",
+      const s = (await c.query("insert into plan_scenarios (family_id, name, description, parent_scenario_id, version, base_date, horizon_fys, entity_scope, assumptions, created_by) values ($1,$2,$3,$4,$5,coalesce($6::date, app_today()),$7,$8,$9,$10) returning *",
         [fam(req), b.name, b.description ?? null, b.parent_scenario_id ?? null, parentVersion + 1, b.base_date ?? null, b.horizon_fys ?? 3, b.entity_scope ?? null, JSON.stringify({ ...DEFAULT_ASSUMPTIONS, ...(b.assumptions ?? {}), returns: { ...DEFAULT_ASSUMPTIONS.returns, ...(b.assumptions?.returns ?? {}) } }), req.user!.id])).rows[0];
       if (b.parent_scenario_id) await c.query("insert into plan_actions (family_id, scenario_id, seq, kind, entity_id, target_type, target_id, params, planned_date, planned_amount, note) select family_id, $2, seq, kind, entity_id, target_type, target_id, params, planned_date, planned_amount, note from plan_actions where scenario_id=$1", [b.parent_scenario_id, s.id]);
       return void reply.code(201).send(scenarioView(s));
@@ -122,7 +122,7 @@ export default async function routes(app: FastifyInstance) {
     const id = (req.params as any).id; const b = z.object({ name: z.string().optional() }).parse(req.body ?? {});
     const s = (await c.query("select * from plan_scenarios where id=$1 and deleted_at is null", [id])).rows[0];
     if (!s) return void reply.code(404).send({ title: "Not found", status: 404 });
-    const n = (await c.query("insert into plan_scenarios (family_id, name, description, parent_scenario_id, version, base_date, horizon_fys, entity_scope, assumptions, created_by) values ($1,$2,$3,$4,$5,current_date,$6,$7,$8,$9) returning *", [fam(req), b.name ?? `${s.name} (v${Number(s.version) + 1})`, s.description, s.id, Number(s.version) + 1, s.horizon_fys, s.entity_scope, JSON.stringify(s.assumptions), req.user!.id])).rows[0];
+    const n = (await c.query("insert into plan_scenarios (family_id, name, description, parent_scenario_id, version, base_date, horizon_fys, entity_scope, assumptions, created_by) values ($1,$2,$3,$4,$5,app_today(),$6,$7,$8,$9) returning *", [fam(req), b.name ?? `${s.name} (v${Number(s.version) + 1})`, s.description, s.id, Number(s.version) + 1, s.horizon_fys, s.entity_scope, JSON.stringify(s.assumptions), req.user!.id])).rows[0];
     await c.query("insert into plan_actions (family_id, scenario_id, seq, kind, entity_id, target_type, target_id, params, planned_date, planned_amount, note) select family_id, $2, seq, kind, entity_id, target_type, target_id, params, planned_date, planned_amount, note from plan_actions where scenario_id=$1", [id, n.id]);
     return void reply.code(201).send({ ...scenarioView(n), action_count: (await c.query("select count(*) n from plan_actions where scenario_id=$1", [n.id])).rows[0].n });
   }));

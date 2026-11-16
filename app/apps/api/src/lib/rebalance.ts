@@ -201,9 +201,19 @@ export async function simulatePlan(c: pg.PoolClient, familyId: string, planId: s
   const program = (await c.query("select * from rebalance_programs where id=$1", [p.program_id])).rows[0] as ProgramRow;
   const policy = program.policy_id ? (await c.query("select * from investment_policies where id=$1", [program.policy_id])).rows[0] : await governingPolicy(c, program.entity_id, program.goal_id);
   const before = policy?.current_version_id ? await evaluatePolicy(c, familyId, policy.id, { persist: false }) : null;
+  const eff = policy?.current_version_id ? (await effectiveFor(c, policy)).clauses : null;
   const after = (p.allocation_after as any[]).map((a) => ({ key: a.key, target_pct: a.target, min_pct: a.min, max_pct: a.max, actual_pct: a.actual_pct, before_pct: a.before_pct, status: a.status }));
   const breachesAfter = after.filter((a) => a.status === "breach").length, breachesBefore = after.filter((a) => { const miss = a.min_pct != null && a.before_pct < a.min_pct ? 1 : a.max_pct != null && a.before_pct > a.max_pct ? 1 : 0; return miss; }).length;
-  const compliance = before ? { ...before.compliance, checks: before.compliance.checks.map((ch) => { if (ch.kind !== "allocation") return ch; const a = after.find((x) => `asset_class:${x.key}` === ch.key); return a ? { ...ch, actual: `${a.actual_pct}%`, status: a.status, detail: a.status === "in_band" ? "after the plan" : a.min_pct != null && a.actual_pct < a.min_pct ? `${r2(a.min_pct - a.actual_pct)} pp below the band (after the plan)` : a.max_pct != null && a.actual_pct > a.max_pct ? `${r2(a.actual_pct - a.max_pct)} pp above the band (after the plan)` : ch.detail } : ch; }) } : null;
+  // Judge the plan by the policy, not by the planner: apply the plan's move in each class (after minus before) to the policy's own reading and test it against the policy's own band,
+  // so a class is a new breach only when the plan itself pushes it out of the policy's band.
+  const limits = ((eff as any)?.allocations ?? []) as any[];
+  const compliance = before ? { ...before.compliance, checks: before.compliance.checks.map((ch) => {
+    if (ch.kind !== "allocation" || ch.status === "n/a") return ch;
+    const a = after.find((x) => `asset_class:${x.key}` === ch.key); const lim = limits.find((x) => x.lens === "asset_class" && `asset_class:${x.key}` === ch.key); if (!a || !lim) return ch;
+    const actual = r2((before.snapshot.allocation.asset_class?.[a.key] ?? 0) + (a.actual_pct - a.before_pct)); const min = lim.min_pct == null ? null : Number(lim.min_pct), max = lim.max_pct == null ? null : Number(lim.max_pct);
+    const miss = min != null && actual < min ? min - actual : max != null && actual > max ? actual - max : 0; const status = miss === 0 ? "in_band" : miss <= 1 ? "warning" : "breach";
+    return { ...ch, actual: `${actual}%`, status: status as typeof ch.status, detail: miss ? `${r2(miss)} pp ${min != null && actual < min ? "below" : "above"} the band (after the plan)` : "after the plan" };
+  }) } : null;
   if (compliance) { compliance.breaches = compliance.checks.filter((x) => x.status === "breach").length; compliance.warnings = compliance.checks.filter((x) => x.status === "warning").length; compliance.overall = compliance.breaches ? "breach" : compliance.warnings ? "warning" : "compliant"; }
   const sim = { compliance_after: compliance, allocation_after: after, band_breaches_before: breachesBefore, band_breaches_after: breachesAfter, est_tax: Number(p.summary?.est_tax ?? 0), est_costs: Number(p.summary?.est_costs ?? 0), cash_timeline: p.cash_timeline, new_breach: compliance ? compliance.breaches > (before?.compliance.breaches ?? 0) : false, simulated_at: new Date().toISOString() };
   await c.query("update rebalance_plans set simulation=$2 where id=$1", [planId, JSON.stringify(sim)]);
@@ -217,7 +227,7 @@ export async function convertPlan(c: pg.PoolClient, familyId: string, planId: st
   const moves = (await c.query("select m.*, i.type to_type, hi.type from_type, hi.id from_instrument_id, hi.name from_name from rebalance_moves m left join instruments i on i.id=m.to_instrument_id left join holdings h on h.id=m.from_holding_id left join instruments hi on hi.id=h.instrument_id where m.plan_id=$1 and m.status='planned' order by m.seq", [planId])).rows;
   const batch = (await c.query("select gen_random_uuid() id")).rows[0].id; const intents: any[] = [];
   for (const m of moves) {
-    if (m.kind === "hold_cash") { await c.query("update rebalance_moves set status='executed', executed_on=current_date, executed_ref_type='cash_reserved' where id=$1", [m.id]); continue; }
+    if (m.kind === "hold_cash") { await c.query("update rebalance_moves set status='executed', executed_on=app_today(), executed_ref_type='cash_reserved' where id=$1", [m.id]); continue; }
     let kind = INTENT_KIND[m.kind] ?? "assisted"; if (m.kind === "sell" && m.from_type === "mf") kind = "mf_redemption"; if (m.kind === "redeem" && m.from_type && m.from_type !== "mf") kind = m.from_type === "stock" || m.from_type === "etf" ? "equity_order" : "assisted"; if (m.kind === "buy" && (m.to_type === "stock" || m.to_type === "etf")) kind = "equity_order"; if (m.kind === "buy" && !m.to_instrument_id) kind = "assisted";
     const payload = { instrument_id: m.from_instrument_id ?? m.to_instrument_id ?? null, side: ["sell", "redeem"].includes(m.kind) ? "sell" : "buy", quantity: m.quantity == null ? null : Number(m.quantity), amount: Number(m.amount), scheduled_for: iso(m.planned_date), settles_on: iso(m.settles_on), lot_ids: m.from_lot_ids, reason: m.reason, plan_id: planId, move_id: m.id, name: m.from_name ?? m.what };
     const connector = (await c.query("select id from connectors where entity_id=$1 and revoked_at is null and status in ('active','sandbox') order by (status='active') desc limit 1", [m.entity_id])).rows[0];

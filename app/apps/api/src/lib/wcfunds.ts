@@ -90,6 +90,6 @@ export async function refreshFundHistory(db: Db, codes: string[], bases: number[
 
 /** The live yield of one stored instrument, or null while its history is too short to say. */
 export async function liveYieldFor(db: Db, instrumentId: string, basisDays: number): Promise<NavYield | null> {
-  const rows = (await db.query("select price_date::text d, close from prices where instrument_id=$1 and price_date >= current_date - $2::int order by price_date", [instrumentId, basisDays + 45])).rows;
+  const rows = (await db.query("select price_date::text d, close from prices where instrument_id=$1 and price_date >= app_today() - $2::int order by price_date", [instrumentId, basisDays + 45])).rows;
   return navYield(rows.map((r: any) => ({ date: r.d, nav: Number(r.close) })), basisDays);
 }
