@@ -268,6 +268,8 @@ export default async function routes(app: FastifyInstance) {
       if (!(["received", "partial", "waived"] as string[]).includes(row.status)) return void reply.code(409).send({ title: "Only a received, partly received or waived rent can be undone", status: 409 });
       const status = iso(row.due_date)! < today() ? "overdue" : "due";
       await c.query("update rent_schedule set received_amount=0, received_on=null, bank_txn_id=null, status=$2 where id=$1", [id, status]);
+      // release the bank line that was matched to this rent, so a later bank import can match it again
+      await c.query("update bank_txns set link_type='none', link_id=null where family_id=$1 and link_type='rent' and link_id=$2", [fam, id]);
       await c.query("insert into audit_log (family_id, user_id, action, table_name, row_id, before, after) values ($1,$2,'revert','rent_schedule',$3,$4,$5)", [fam, req.user!.id, id, JSON.stringify({ status: row.status, received_amount: row.received_amount }), JSON.stringify({ status })]);
       return rentView((await c.query(`${RENT_SQL} where rs.id=$1`, [id])).rows[0]);
     });
