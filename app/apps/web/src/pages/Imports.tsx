@@ -70,7 +70,7 @@ export function ImportPanel({ kind = "statement", bankAccountId, onDone }: { kin
       <div className={`drop ${drag ? "on" : ""}`} onClick={() => input.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files[0]); }}>
-        <input ref={input} type="file" hidden accept=".csv,.txt,.json,text/*,application/json" onChange={(e) => pick(e.target.files?.[0])} />
+        <input ref={input} type="file" hidden accept=".csv,.txt,.json,text/*,application/json" onClick={(e) => e.stopPropagation()} onChange={(e) => pick(e.target.files?.[0])} />
         <Upload size={18} style={{ color: "var(--mute)" }} />
         <div><b>{file ? file.name : kind === "bank" ? "Drop a bank statement CSV or AA JSON" : "Drop a CAS text, tradebook or contract note CSV, or Form 26AS"}</b></div>
         <div className="small mute">{kind === "bank" ? "HDFC, ICICI, SBI, Kotak and Axis layouts are recognised automatically" : "CAMS / KFintech CAS · Zerodha tradebook · any broker via the mapping assistant · TRACES 26AS · up to 25 MB"}</div>
