@@ -99,9 +99,9 @@ describe("Account Aggregator", () => {
     const s = await run((c) => syncConsent(c, FAMILY, consentId2, { provider: p })); expect(s.accounts).toBe(1); expect(s.txns_new).toBe(SAMPLE_REFS.length); expect(s.balances[0]).toEqual({ bank_account_id: ICICI, balance: Number(SAMPLE.account.Summary.currentBalance).toFixed(2) });
     expect(calls.filter((c) => c.url.includes("/FIFetch/")).length).toBe(2);   // one 202, then the data
     const linked = await run(async (c) => (await c.query("select aa_consent_id from bank_accounts where id=$1", [ICICI])).rows[0].aa_consent_id); expect(linked).toBe(consentId2);
-    // the key schedule is symmetric and tamper-evident
+    // the key schedule is symmetric and tamper-evident (the tamper always changes the text: the keys are random, so a fixed replacement character can match the original)
     const a = sessionKey(keys.privateKeyPem, fip.publicKeyB64, keys.nonceB64, fip.nonceB64), b = sessionKey(fip.privateKeyPem, keys.publicKeyB64, fip.nonceB64, keys.nonceB64); expect(a.key.equals(b.key)).toBe(true); expect(a.iv.equals(b.iv)).toBe(true);
-    expect(decryptFi(encryptFi("hello", a.key, a.iv), b.key, b.iv)).toBe("hello"); expect(() => decryptFi(encryptFi("hello", a.key, a.iv).replace(/.$/, "A"), b.key, b.iv)).toThrow();
+    expect(decryptFi(encryptFi("hello", a.key, a.iv), b.key, b.iv)).toBe("hello"); expect(() => decryptFi(((t: string) => (t[0] === "A" ? "B" : "A") + t.slice(1))(encryptFi("hello", a.key, a.iv)), b.key, b.iv)).toThrow();
     delete process.env.AA_CLIENT_ID; delete process.env.AA_CLIENT_SECRET;
   });
 });

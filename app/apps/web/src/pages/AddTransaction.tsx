@@ -21,7 +21,7 @@ export function AddTransaction({ h, onClose, onSaved }: { h: any; onClose: () =>
   const unitless = UNITLESS.includes(h.type); const choices = choicesFor(h.type);
   const accts = useApi<any[]>("/bank-accounts"); const hist = useApi<any[]>(`/holdings/${h.id}/transactions`); const calls = useApi<any>(h.type === "aif" ? `/holdings/${h.id}/capital-calls` : null);
   const [f, setF] = useState<any>({ kind: "buy", date: today(), quantity: "", price: "", amount: "", charges: "", bank: "" });
-  const [callId, setCallId] = useState<string | null>(null); const [pv, setPv] = useState<any | null>(null); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const [callId, setCallId] = useState<string | null>(null); const [pv, setPv] = useState<any | null>(null); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false); const [note, setNote] = useState("");
   const set = (k: string, v: any) => setF((s: any) => ({ ...s, [k]: v }));
   const mine = (accts.data ?? []).filter((a) => a.entity_id === h.entity_id && a.type !== "card");
   const byAmount = unitless || f.kind === "income" || f.kind === "fee";
@@ -43,6 +43,13 @@ export function AddTransaction({ h, onClose, onSaved }: { h: any; onClose: () =>
     catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
   const bankLabel = f.kind === "buy" || f.kind === "fee" ? "Paid from" : "Credited to";
+  // Removes an earlier entry (manual or from a statement). The server puts the units back, or refuses if a later sale used them.
+  const remove = async (t: any) => {
+    if (!window.confirm(`Delete this ${NAMES[t.type] ?? t.type} entry of ${t.quantity ? Number(t.quantity).toLocaleString("en-IN") + " units" : inr(t.amount)} on ${fmtDate(t.date)}? The holding will be recalculated.`)) return;
+    setBusy(true); setErr(""); setNote("");
+    try { await api(`/investment-txns/${t.id}`, { method: "DELETE" }); setNote(`${NAMES[t.type] ?? t.type} entry deleted. Holding recalculated.`); hist.refetch(); }
+    catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
 
   return <div className="modal-bg" onClick={onClose}><div className="modal" onClick={(e) => e.stopPropagation()}>
     <h3 style={{ margin: 0 }}>Add transaction — {h.instrument}</h3>
@@ -79,8 +86,9 @@ export function AddTransaction({ h, onClose, onSaved }: { h: any; onClose: () =>
     {err && <div className="err">{err}</div>}
     {hist.data && hist.data.length > 0 && <div style={{ marginTop: 10 }}>
       <b className="small">Earlier entries</b>
-      <div style={{ maxHeight: 170, overflow: "auto" }}><table className="tbl"><thead><tr><th>Date</th><th>Entry</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Amount</th></tr></thead>
-        <tbody>{hist.data.map((t: any) => <tr key={t.id}><td>{fmtDate(t.date)}</td><td>{NAMES[t.type] ?? t.type}{t.source !== "manual" ? <span className="small mute"> · {t.source}</span> : null}</td><td className="num">{t.quantity ? t.quantity.toLocaleString("en-IN") : "—"}</td><td className="num">{t.price ? inr(t.price) : "—"}</td><td className="num">{inr(t.amount)}</td></tr>)}</tbody></table></div>
+      <div style={{ maxHeight: 170, overflow: "auto" }}><table className="tbl"><thead><tr><th>Date</th><th>Entry</th><th className="num">Qty</th><th className="num">Price</th><th className="num">Amount</th><th></th></tr></thead>
+        <tbody>{hist.data.map((t: any) => <tr key={t.id}><td>{fmtDate(t.date)}</td><td>{NAMES[t.type] ?? t.type}{t.source !== "manual" ? <span className="small mute"> · {t.source}</span> : null}</td><td className="num">{t.quantity ? t.quantity.toLocaleString("en-IN") : "—"}</td><td className="num">{t.price ? inr(t.price) : "—"}</td><td className="num">{inr(t.amount)}</td><td><button className="btn btn-s" style={{ color: "var(--red)" }} disabled={busy} onClick={() => remove(t)}>Delete</button></td></tr>)}</tbody></table></div>
+      {note && <div className="small" style={{ color: "var(--teal)", marginTop: 4 }}>{note}</div>}
     </div>}
     <div className="row gap" style={{ justifyContent: "flex-end", marginTop: 8 }}><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-p" disabled={busy || !ready} onClick={save}>{busy ? "Saving…" : "Save"}</button></div>
   </div></div>;
