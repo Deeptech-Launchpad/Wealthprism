@@ -71,6 +71,7 @@ export function AddTransaction({ h, onClose, onSaved }: { h: any; onClose: () =>
         </>}
       {!byAmount && <label className="field">Charges (₹, optional)<input type="number" step="any" value={f.charges} onChange={(e) => set("charges", e.target.value)} /></label>}
       <label className="field">{bankLabel} (optional)<select value={f.bank} onChange={(e) => set("bank", e.target.value)}><option value="">— don't change any balance —</option>{mine.map((a: any) => <option key={a.id} value={a.id}>{a.bank} {a.account_masked}</option>)}</select></label>
+      {!f.bank && ready && <div className="small" style={{ color: "var(--amber)", gridColumn: "1 / -1" }}>No bank account chosen: the bank balance will not change, so net worth counts this money twice. Choose the account it was {f.kind === "buy" || f.kind === "fee" ? "paid from" : "received into"}.</div>}
     </div>
     {unitless && (f.kind === "buy" || f.kind === "sell") && <div className="small mute">This holding has no units: the amount is turned into units at its latest value, so update the value first if the statement says it has changed.</div>}
     {pv && <div className="small" style={{ background: "var(--paper)", borderRadius: 8, padding: 8, marginTop: 8 }}>
