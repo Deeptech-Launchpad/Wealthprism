@@ -162,7 +162,7 @@ export async function matchActuals(c: pg.PoolClient, familyId: string, opts: { s
       const before = Number(a.simulated_effect?.tax ?? 0);
       await c.query("update plan_actions set params = params || $2 where id=$1", [a.id, JSON.stringify({ price: Number(txn.price) })]);
       try { const re = await runScenario(c, familyId, a.scenario_id); taxDelta = r2(Number(re.action_effects[a.id]?.tax ?? 0) - before); } catch { taxDelta = null; }
-      const t = await c.query("insert into tasks (family_id, entity_id, module, title, reason, amount, due_date, severity, source_type, source_id) select $1,$2,'planning',$3,$4,$5,current_date,2,'plan_variance',$6 where not exists (select 1 from tasks where source_type='plan_variance' and source_id=$6 and status='open') returning id",
+      const t = await c.query("insert into tasks (family_id, entity_id, module, title, reason, amount, due_date, severity, source_type, source_id) select $1,$2,'planning',$3,$4,$5,app_today(),2,'plan_variance',$6 where not exists (select 1 from tasks where source_type='plan_variance' and source_id=$6 and status='open') returning id",
         [familyId, a.entity_id ?? txn.entity_id, `Plan variance: ${a.scenario_name}`, `${a.kind} executed ${Math.abs(days)} d ${days > 0 ? "late" : "early"}${pricePct ? `, price ${pricePct.toFixed(1)}% off plan` : ""}${taxDelta != null ? `; tax effect changes by ₹${taxDelta.toLocaleString("en-IN")}` : ""}`, taxDelta, a.scenario_id]);
       flagged += t.rowCount ?? 0;
     }

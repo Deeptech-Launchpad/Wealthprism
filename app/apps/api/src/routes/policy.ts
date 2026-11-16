@@ -187,7 +187,7 @@ export default async function routes(app: FastifyInstance) {
       const done = status === "completed" || status === "skipped";
       const u = (await c.query("update policy_reviews set status=$2::review_status, outcome=coalesce($3,outcome), resulting_version_id=$4, note=coalesce($5,note), findings=coalesce($6,findings), reviewer_user_id=coalesce(reviewer_user_id,$7), started_at=coalesce(started_at, case when $2 <> 'due' then now() end), completed_at=case when $8 then now() else completed_at end where id=$1 returning *", [r.id, status, b.outcome ?? null, resulting, b.note ?? null, b.findings ? JSON.stringify(b.findings) : null, req.user!.id, done])).rows[0];
       if (done && r.task_id) await c.query("update tasks set status=$2, done_at=now() where id=$1 and status='open'", [r.task_id, status === "completed" ? "done" : "dismissed"]);
-      if (b.outcome === "no_change") await c.query("update investment_policies set next_review_on = current_date + ($2 || ' months')::interval where id=$1", [r.policy_id, String(r.review_every_months ?? 12)]);
+      if (b.outcome === "no_change") await c.query("update investment_policies set next_review_on = app_today() + ($2 || ' months')::interval where id=$1", [r.policy_id, String(r.review_every_months ?? 12)]);
       const diff = resulting && r.current_version_id && resulting !== r.current_version_id ? diffClauses((await versionClauses(c, r.current_version_id)) as any, (await versionClauses(c, resulting)) as any) : [];
       return { ...u, due_on: iso(u.due_on), diff };
     });

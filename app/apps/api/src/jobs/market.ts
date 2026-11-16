@@ -199,15 +199,15 @@ export async function stalePriceTasks(maxAgeDays = 4) {
   for (const fam of await families()) {
     await withFamilyClient(fam, async (c) => {
       const stale = (await c.query(`select distinct i.id, i.name, max(p.price_date) last from holdings h join instruments i on i.id=h.instrument_id left join prices p on p.instrument_id=i.id
-          where h.quantity > 0 and i.type in ('stock','etf','mf','bond','sgb') group by i.id, i.name having max(p.price_date) is null or max(p.price_date) < current_date - $1::int`, [maxAgeDays])).rows;
+          where h.quantity > 0 and i.type in ('stock','etf','mf','bond','sgb') group by i.id, i.name having max(p.price_date) is null or max(p.price_date) < app_today() - $1::int`, [maxAgeDays])).rows;
       for (const s of stale) {
         const r = await c.query(`insert into tasks (family_id, module, title, reason, due_date, severity, source_type, source_id)
-            select $1,'investments',$2,$3,current_date,3,'instrument',$4 where not exists (select 1 from tasks where source_type='instrument' and source_id=$4 and status='open')`,
+            select $1,'investments',$2,$3,app_today(),3,'instrument',$4 where not exists (select 1 from tasks where source_type='instrument' and source_id=$4 and status='open')`,
           [fam, `Price stale: ${s.name}`, s.last ? `Last close ${new Date(s.last).toISOString().slice(0, 10)}; the feed has not delivered a newer one` : "No price on file; valued at cost", s.id]);
         raised += r.rowCount ?? 0;
       }
       const fresh = await c.query(`update tasks t set status='done', done_at=now() where t.status='open' and t.source_type='instrument' and not exists (
-          select 1 from holdings h join instruments i on i.id=h.instrument_id left join prices p on p.instrument_id=i.id where i.id=t.source_id and h.quantity > 0 group by i.id having max(p.price_date) is null or max(p.price_date) < current_date - $1::int)`, [maxAgeDays]);
+          select 1 from holdings h join instruments i on i.id=h.instrument_id left join prices p on p.instrument_id=i.id where i.id=t.source_id and h.quantity > 0 group by i.id having max(p.price_date) is null or max(p.price_date) < app_today() - $1::int)`, [maxAgeDays]);
       closed += fresh.rowCount ?? 0;
     });
   }

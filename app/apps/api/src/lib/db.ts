@@ -14,6 +14,8 @@ export function withFamily<T>(familyId: string, fn: (c: pg.PoolClient) => Promis
     try {
       await c.query("begin");
       await c.query("select set_config('app.family_id', $1, true)", [familyId]);
+      // test runs only: pin the database's "today" to the same date as the JavaScript clock (see test/clock.ts)
+      if (process.env.FO_TEST_TODAY) await c.query("select set_config('app.today', $1, true)", [process.env.FO_TEST_TODAY]);
       const r = await fn(c);
       await c.query("commit");
       return r;
