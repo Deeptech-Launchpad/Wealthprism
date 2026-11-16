@@ -29,7 +29,7 @@ export default async function assetRoutes(app: FastifyInstance) {
   app.get("/holding-receipts", async (req) => withFamily(fam(req), async (c) => {
     const q = z.object({ status: z.enum(["open", "all"]).default("open") }).parse(req.query);
     await syncHoldingReceipts(c, fam(req));
-    return (await c.query(`select r.id, r.holding_id, r.entity_id, e.name entity_name, r.instrument_id, i.name instrument, i.type instrument_type, r.kind, r.due_date::text due_date, r.expected_amount, r.received_amount, r.received_on::text received_on, r.status, r.bank_txn_ref, (r.due_date - current_date) days
+    return (await c.query(`select r.id, r.holding_id, r.entity_id, e.name entity_name, r.instrument_id, i.name instrument, i.type instrument_type, r.kind, r.due_date::text due_date, r.expected_amount, r.received_amount, r.received_on::text received_on, r.status, r.bank_txn_ref, (r.due_date - app_today()) days
       from holding_receipts r join instruments i on i.id=r.instrument_id join entities e on e.id=r.entity_id where r.family_id=$1 and r.status <> 'cancelled' and ($2::boolean or r.status in ('expected','overdue','partial'))
       order by r.due_date limit 300`, [fam(req), q.status === "all"])).rows.map(receiptView);
   }));
@@ -182,7 +182,7 @@ export default async function assetRoutes(app: FastifyInstance) {
     if (h.type !== "aif") return { is_aif: false };
     const called = Number((await c.query("select coalesce(sum(amount),0) a from investment_txns where family_id=$1 and entity_id=$2 and instrument_id=$3 and account_id is not distinct from $4 and type='buy'", [familyId, h.entity_id, h.instrument_id, h.account_id])).rows[0].a);
     const commitment = h.commitment ? Number(h.commitment) : null;
-    const calls = (await c.query("select id, due_date::text due_date, amount, status, paid_on::text paid_on, note, (due_date - current_date) days from capital_calls where holding_id=$1 and status <> 'cancelled' order by due_date", [holdingId])).rows.map((x: any) => ({ ...x, amount: Number(x.amount), days: Number(x.days) }));
+    const calls = (await c.query("select id, due_date::text due_date, amount, status, paid_on::text paid_on, note, (due_date - app_today()) days from capital_calls where holding_id=$1 and status <> 'cancelled' order by due_date", [holdingId])).rows.map((x: any) => ({ ...x, amount: Number(x.amount), days: Number(x.days) }));
     return { is_aif: true, commitment, called: r2(called), remaining: commitment == null ? null : r2(Math.max(0, commitment - called)), pct: commitment ? Math.round(called / commitment * 1000) / 10 : null, calls };
   };
   app.get("/holdings/:id/capital-calls", async (req, reply) => { try { return void reply.send(await withFamily(fam(req), (c) => callsView(c, fam(req), (req.params as any).id))); } catch (e) { return problem(reply, e); } });
@@ -375,7 +375,7 @@ export default async function assetRoutes(app: FastifyInstance) {
         if (at.code === "mf") { try { await refreshFundHistory(c, [b.amfi_code!], []); } catch { priceNote = "The latest NAV could not be fetched; the value follows your purchase price until the nightly feed runs."; } }
         else if (b.current_price && b.current_price > 0 && !["gsec", "tbill"].includes(at.code)) {   // a G-Sec or T-bill is valued by the app, so a typed price is not kept
           const has = (await c.query("select 1 from prices where instrument_id=$1 limit 1", [instrumentId])).rowCount;
-          if (!has || created) await c.query("insert into prices (instrument_id, price_date, close, source) values ($1, current_date, $2, 'manual') on conflict (instrument_id, price_date) do update set close=excluded.close, source='manual'", [instrumentId, b.current_price]);
+          if (!has || created) await c.query("insert into prices (instrument_id, price_date, close, source) values ($1, app_today(), $2, 'manual') on conflict (instrument_id, price_date) do update set close=excluded.close, source='manual'", [instrumentId, b.current_price]);
           else priceNote = "This security already has a market price, so the typed current price was ignored.";
         }
         const h = (await c.query("select id, quantity, avg_cost from holdings where family_id=$1 and entity_id=$2 and instrument_id=$3 order by updated_at desc limit 1", [fam(req), b.entity_id, instrumentId])).rows[0];

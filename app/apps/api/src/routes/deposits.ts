@@ -53,7 +53,7 @@ async function checkType(c: any, code: string, kind: string, startDate: string, 
 async function writeSchedule(c: any, fam: string, depositId: string, terms: Parameters<typeof generateDepositSchedule>[0]) {
   const compounding = (await c.query("select t.compounding from deposits d join deposit_types t on t.code=d.type_code where d.id=$1", [depositId])).rows[0]?.compounding;
   const schedule = generateDepositSchedule({ ...terms, compounding });
-  for (const s of schedule) await c.query("insert into deposit_receipts (family_id, deposit_id, kind, due_date, expected_amount, status) values ($1,$2,$3,$4,$5, case when $4::date < current_date then 'overdue'::text else 'expected'::text end)", [fam, depositId, s.kind, s.dueDate, s.expectedAmount]);
+  for (const s of schedule) await c.query("insert into deposit_receipts (family_id, deposit_id, kind, due_date, expected_amount, status) values ($1,$2,$3,$4,$5, case when $4::date < app_today() then 'overdue'::text else 'expected'::text end)", [fam, depositId, s.kind, s.dueDate, s.expectedAmount]);
   return schedule.length;
 }
 

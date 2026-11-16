@@ -70,8 +70,8 @@ export async function bucketTargets(c: pg.PoolClient, familyId: string, entityId
 }
 export async function putBucketTargets(c: pg.PoolClient, familyId: string, b: { entity_id?: string | null; liquidity_pct: number; income_pct: number; growth_pct: number; drift_threshold_pp?: number }) {
   if (Math.abs(b.liquidity_pct + b.income_pct + b.growth_pct - 100) > 0.01) throw new AllocError(422, `Bucket targets add to ${r2(b.liquidity_pct + b.income_pct + b.growth_pct)}%; they must total 100`);
-  await c.query("delete from bucket_targets where family_id=$1 and entity_id is not distinct from $2 and policy_version_id is null and effective_from = current_date", [familyId, b.entity_id ?? null]);
-  await c.query("insert into bucket_targets (family_id, entity_id, liquidity_pct, income_pct, growth_pct, drift_threshold_pp, effective_from) values ($1,$2,$3,$4,$5,$6,current_date)", [familyId, b.entity_id ?? null, b.liquidity_pct, b.income_pct, b.growth_pct, b.drift_threshold_pp ?? 5]);
+  await c.query("delete from bucket_targets where family_id=$1 and entity_id is not distinct from $2 and policy_version_id is null and effective_from = app_today()", [familyId, b.entity_id ?? null]);
+  await c.query("insert into bucket_targets (family_id, entity_id, liquidity_pct, income_pct, growth_pct, drift_threshold_pp, effective_from) values ($1,$2,$3,$4,$5,$6,app_today())", [familyId, b.entity_id ?? null, b.liquidity_pct, b.income_pct, b.growth_pct, b.drift_threshold_pp ?? 5]);
   return bucketTargets(c, familyId, b.entity_id ?? null);
 }
 export async function glidePaths(c: pg.PoolClient, familyId: string) { return (await c.query("select gp.id, gp.goal_id, g.name goal, gp.steps from glide_paths gp join goals g on g.id=gp.goal_id where gp.family_id=$1 order by g.target_year", [familyId])).rows; }
@@ -118,7 +118,7 @@ export async function rebalanceProposal(c: pg.PoolClient, familyId: string, opts
     for (const { h } of cands) { if (toMove <= 0) break; const amt = r2(Math.min(toMove, Number(h.value))); const gain = r2(amt * (1 - Number(h.cost) / Math.max(1, Number(h.value)))); const tx = await saleTax(c, h, gain, slab);
       const m = { from_holding_id: h.id, from: h.instrument, entity: h.entity_name, from_bucket: o.bucket, to_bucket: target, to_instrument: dest(target), amount: money(amt), est_gain: money(gain), tax_impact: money(tx.tax), term: tx.term, reason: `${o.bucket} is ${o.driftPp > 0 ? "+" : ""}${o.driftPp} pp over target; ${h.instrument} carries the smallest taxable gain (${tx.term}${tx.rate ? ` @ ${tx.rate}%` : ""})`, task_id: null as string | null };
       // de-duplicated on (source_type, source_id) while open, same as every generator in jobs/tasks.ts — re-proposing an unresolved drift must not pile up a fresh task each time
-      if (opts.createTasks) { const tk = (await c.query("insert into tasks (family_id, entity_id, module, title, reason, severity, amount, due_date, source_type, source_id, verification) select $1,$2,'goals',$3,$4,2,$5,current_date + 7,'bucket_move',$6,'pending' where not exists (select 1 from tasks where family_id=$1 and source_type='bucket_move' and source_id=$6 and status='open') returning id", [familyId, h.entity_id, `Move ₹${amt.toLocaleString("en-IN")} from ${h.instrument} to ${m.to_instrument}`, m.reason, amt, h.id])).rows[0]
+      if (opts.createTasks) { const tk = (await c.query("insert into tasks (family_id, entity_id, module, title, reason, severity, amount, due_date, source_type, source_id, verification) select $1,$2,'goals',$3,$4,2,$5,app_today() + 7,'bucket_move',$6,'pending' where not exists (select 1 from tasks where family_id=$1 and source_type='bucket_move' and source_id=$6 and status='open') returning id", [familyId, h.entity_id, `Move ₹${amt.toLocaleString("en-IN")} from ${h.instrument} to ${m.to_instrument}`, m.reason, amt, h.id])).rows[0]
         ?? (await c.query("select id from tasks where family_id=$1 and source_type='bucket_move' and source_id=$2 and status='open' order by created_at desc limit 1", [familyId, h.id])).rows[0];
         m.task_id = tk?.id ?? null; if (tk) taskCount++; }
       moves.push(m); toMove = r2(toMove - amt); }
@@ -145,7 +145,7 @@ export async function createModelPortfolio(c: pg.PoolClient, familyId: string, b
 }
 export interface AcTarget { id: string | null; entity_id: string | null; alloc_class: string; target_pct: number; min_pct: number | null; max_pct: number | null; effective_from: string | null; policy_version_id: string | null; inherited: boolean }
 export async function assetClassTargets(c: pg.PoolClient, familyId: string, entityId?: string | null): Promise<AcTarget[]> {
-  const rows = (await c.query("select distinct on (alloc_class) id, entity_id, alloc_class::text alloc_class, target_pct, min_pct, max_pct, effective_from::text, policy_version_id from asset_class_targets where family_id=$1 and entity_id is not distinct from $2 and effective_from <= current_date order by alloc_class, effective_from desc, id desc", [familyId, entityId ?? null])).rows;
+  const rows = (await c.query("select distinct on (alloc_class) id, entity_id, alloc_class::text alloc_class, target_pct, min_pct, max_pct, effective_from::text, policy_version_id from asset_class_targets where family_id=$1 and entity_id is not distinct from $2 and effective_from <= app_today() order by alloc_class, effective_from desc, id desc", [familyId, entityId ?? null])).rows;
   if (!rows.length && entityId) return (await assetClassTargets(c, familyId, null)).map((r: AcTarget) => ({ ...r, inherited: true }));
   return rows.map((r: any): AcTarget => ({ id: r.id, entity_id: r.entity_id, alloc_class: r.alloc_class, target_pct: Number(r.target_pct), min_pct: r.min_pct == null ? null : Number(r.min_pct), max_pct: r.max_pct == null ? null : Number(r.max_pct), effective_from: r.effective_from, policy_version_id: r.policy_version_id, inherited: false }));
 }
@@ -155,8 +155,8 @@ export async function putAssetClassTargets(c: pg.PoolClient, familyId: string, b
   if (!targets.length) throw new AllocError(422, "targets or model_portfolio_id required");
   const sum = targets.reduce((s, t) => s + Number(t.target_pct), 0); if (Math.abs(sum - 100) > 0.01) throw new AllocError(422, `Targets add to ${r2(sum)}%; they must total 100`);
   for (const t of targets) { if (!CLASSES.includes(t.alloc_class as any)) throw new AllocError(422, `Unknown asset class ${t.alloc_class}`); if (t.min_pct != null && t.max_pct != null && (t.min_pct > t.target_pct || t.max_pct < t.target_pct)) throw new AllocError(422, `${t.alloc_class}: the band must contain the target`); }
-  await c.query("delete from asset_class_targets where family_id=$1 and entity_id is not distinct from $2 and policy_version_id is null and effective_from = current_date", [familyId, b.entity_id ?? null]);
-  for (const t of targets) await c.query("insert into asset_class_targets (family_id, entity_id, alloc_class, target_pct, min_pct, max_pct, effective_from) values ($1,$2,$3::alloc_class,$4,$5,$6,current_date)", [familyId, b.entity_id ?? null, t.alloc_class, t.target_pct, t.min_pct ?? null, t.max_pct ?? null]);
+  await c.query("delete from asset_class_targets where family_id=$1 and entity_id is not distinct from $2 and policy_version_id is null and effective_from = app_today()", [familyId, b.entity_id ?? null]);
+  for (const t of targets) await c.query("insert into asset_class_targets (family_id, entity_id, alloc_class, target_pct, min_pct, max_pct, effective_from) values ($1,$2,$3::alloc_class,$4,$5,$6,app_today())", [familyId, b.entity_id ?? null, t.alloc_class, t.target_pct, t.min_pct ?? null, t.max_pct ?? null]);
   if (b.model_portfolio_id && !b.entity_id) await c.query("insert into allocation_policies (family_id, model_portfolio_id) values ($1,$2) on conflict (family_id) do update set model_portfolio_id=excluded.model_portfolio_id, updated_at=now()", [familyId, b.model_portfolio_id]);
   return assetClassTargets(c, familyId, b.entity_id ?? null);
 }

@@ -95,17 +95,17 @@ export async function payeeCheck(c: pg.PoolClient, familyId: string, payeeId: st
 
 // ---------- mandates (FO-134) ----------
 export async function mandateFor(c: pg.PoolClient, entityId: string, amount: number) {
-  const m = (await c.query("select * from nach_mandates where entity_id=$1 and status='active' and (end_date is null or end_date >= current_date) order by amount_limit desc limit 1", [entityId])).rows[0]; if (!m) return { mandate: null, ok: false, reason: "no active NACH mandate for this investor" };
+  const m = (await c.query("select * from nach_mandates where entity_id=$1 and status='active' and (end_date is null or end_date >= app_today()) order by amount_limit desc limit 1", [entityId])).rows[0]; if (!m) return { mandate: null, ok: false, reason: "no active NACH mandate for this investor" };
   const used = Number((await c.query("select coalesce(sum(amount),0) v from action_intents where entity_id=$1 and kind in ('mf_purchase','mf_sip_mandate') and status in ('pending_approval','approved','queued','submitted','partially_filled','filled','reconciled','posted') and created_at >= date_trunc('month', now()) and payload->>'mandate_id' = $2", [entityId, m.id])).rows[0].v);
   const room = Number(m.amount_limit) - used; return { mandate: m, ok: amount <= room, reason: amount <= room ? `mandate ${m.umrn ?? m.provider_ref} limit ₹${Number(m.amount_limit).toLocaleString("en-IN")}, ₹${room.toLocaleString("en-IN")} left this month` : `₹${amount.toLocaleString("en-IN")} exceeds the mandate headroom ₹${room.toLocaleString("en-IN")} (limit ₹${Number(m.amount_limit).toLocaleString("en-IN")}) — split the purchase or raise the mandate`, room };
 }
 export async function mandateExpiryTasks(c: pg.PoolClient, familyId: string) {
   let n = 0;
-  for (const m of (await c.query("select m.*, e.name ename from nach_mandates m join entities e on e.id=m.entity_id where m.family_id=$1 and m.status='active' and m.end_date is not null and m.end_date <= current_date + 30", [familyId])).rows) {
+  for (const m of (await c.query("select m.*, e.name ename from nach_mandates m join entities e on e.id=m.entity_id where m.family_id=$1 and m.status='active' and m.end_date is not null and m.end_date <= app_today() + 30", [familyId])).rows) {
     const t = (await c.query("insert into tasks (family_id, entity_id, module, title, reason, severity, due_date, source_type, source_id, verification) select $1,$2,'actions',$3,$4,2,$5,'mandate_expiry',$6,'na' where not exists (select 1 from tasks where family_id=$1 and source_type='mandate_expiry' and source_id=$6 and status='open') returning *", [familyId, m.entity_id, `NACH mandate for ${m.ename} expires ${iso(m.end_date)} — re-register`, `Limit ₹${Number(m.amount_limit).toLocaleString("en-IN")} · UMRN ${m.umrn ?? "—"} · MF purchases fall back to assisted after expiry`, m.end_date, m.id])).rows[0];
     if (t) { n++; await notifyTask(c, t, { push: true }).catch(() => null); }
   }
-  await c.query("update nach_mandates set status='expired' where family_id=$1 and status='active' and end_date < current_date", [familyId]);
+  await c.query("update nach_mandates set status='expired' where family_id=$1 and status='active' and end_date < app_today()", [familyId]);
   return n;
 }
 /** Connector sessions that expired or never opened: a login task each (idempotent). */

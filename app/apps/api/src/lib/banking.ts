@@ -43,7 +43,7 @@ export async function learnRule(c: pg.PoolClient, familyId: string, userId: stri
 /** Re-run the rules over transactions — only the uncategorised / default-bucket ones unless `all`. Returns how many changed. */
 export async function applyRules(c: pg.PoolClient, familyId: string, opts: { all?: boolean; days?: number } = {}) {
   const defaults = (await c.query("select id from categories where family_id is null and name in ('Household','Other income')")).rows.map((r) => r.id);
-  const txns = (await c.query(`select id, narration, counterparty, amount, category_id, link_type from bank_txns where family_id=$1 and not is_transfer and txn_date >= current_date - $2::int ${opts.all ? "" : "and (category_id is null or category_id = any($3::uuid[]))"}`, opts.all ? [familyId, opts.days ?? 365] : [familyId, opts.days ?? 365, defaults])).rows;
+  const txns = (await c.query(`select id, narration, counterparty, amount, category_id, link_type from bank_txns where family_id=$1 and not is_transfer and txn_date >= app_today() - $2::int ${opts.all ? "" : "and (category_id is null or category_id = any($3::uuid[]))"}`, opts.all ? [familyId, opts.days ?? 365] : [familyId, opts.days ?? 365, defaults])).rows;
   let changed = 0;
   for (const t of txns) {
     const r = await matchRule(c, familyId, t); if (!r) continue;
@@ -55,7 +55,7 @@ export async function applyRules(c: pg.PoolClient, familyId: string, opts: { all
 /** Internal transfers: a debit in one own account and an equal credit in another within three days are one movement, not spend or income. */
 export async function detectTransfers(c: pg.PoolClient, familyId: string, opts: { days?: number } = {}) {
   const cat = (await c.query("select id from categories where family_id is null and name='Internal transfer'")).rows[0]?.id ?? null;
-  const debits = (await c.query("select id, bank_account_id, txn_date::text, amount, narration from bank_txns where family_id=$1 and amount < 0 and not is_transfer and link_type in ('none','transfer') and txn_date >= current_date - $2::int order by txn_date", [familyId, opts.days ?? 45])).rows;
+  const debits = (await c.query("select id, bank_account_id, txn_date::text, amount, narration from bank_txns where family_id=$1 and amount < 0 and not is_transfer and link_type in ('none','transfer') and txn_date >= app_today() - $2::int order by txn_date", [familyId, opts.days ?? 45])).rows;
   let pairs = 0;
   for (const d of debits) {
     const hit = (await c.query("select id, bank_account_id from bank_txns where family_id=$1 and bank_account_id <> $2 and amount = $3 and not is_transfer and link_type in ('none','transfer') and txn_date between $4::date - 3 and $4::date + 3 order by abs(txn_date - $4::date) limit 1", [familyId, d.bank_account_id, -Number(d.amount), d.txn_date])).rows[0];
@@ -85,5 +85,5 @@ export async function cashflow(c: pg.PoolClient, familyId: string, opts: { days?
 
 export const outflowView = (o: any) => ({ ...o, amount: money(o.amount), due_date: typeof o.due_date === "string" ? o.due_date.slice(0, 10) : new Date(o.due_date).toISOString().slice(0, 10), source: o.source_type ?? "manual" });
 export async function listOutflows(c: pg.PoolClient, familyId: string, days = 90) {
-  return (await c.query("select o.*, e.name entity_name from committed_outflows o left join entities e on e.id=o.entity_id where o.family_id=$1 and o.due_date between current_date - 7 and current_date + $2::int order by o.due_date, o.amount desc", [familyId, days])).rows.map(outflowView);
+  return (await c.query("select o.*, e.name entity_name from committed_outflows o left join entities e on e.id=o.entity_id where o.family_id=$1 and o.due_date between app_today() - 7 and app_today() + $2::int order by o.due_date, o.amount desc", [familyId, days])).rows.map(outflowView);
 }
