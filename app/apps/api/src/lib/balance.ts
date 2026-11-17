@@ -155,7 +155,7 @@ export async function adequacy(c: pg.PoolClient, familyId: string) {
   const props = (await c.query("select p.id, p.name, coalesce((select value from property_valuations v where v.property_id=p.id order by valued_on desc limit 1), p.acquisition_cost) value from properties p where p.family_id=$1 and p.deleted_at is null", [familyId])).rows;
   const things = (await c.query("select id, kind, name, current_value, insured_policy_id from lifestyle_assets where family_id=$1 and deleted_at is null", [familyId])).rows;   // vehicles, jewellery, art … anything insurable
   const uninsured = [...props.filter((p) => !policies.some((x) => x.kind === "property" && x.covers_id === p.id)).map((p) => ({ type: "property", id: p.id, name: p.name, value: money(p.value) })), ...things.filter((v) => !v.insured_policy_id && !policies.some((x) => ["vehicle", "property", "other"].includes(x.kind) && x.covers_id === v.id)).map((v) => ({ type: v.kind, id: v.id, name: v.name, value: money(v.current_value ?? 0) }))];
-  const calendar = policies.flatMap((p) => (p.next_premium_due ? premiumDates(iso(p.next_premium_due)!, p.premium_frequency, addDays(today(), 365)).map((d) => ({ due: d, policy_id: p.id, insurer: p.insurer, kind: p.kind, amount: money(p.premium), entity_id: p.entity_id })) : [])).sort((a, b) => a.due.localeCompare(b.due));
+  const calendar = policies.flatMap((p) => (p.next_premium_due ? nextPremiumDates(iso(p.next_premium_due)!, p.premium_frequency, addDays(today(), 365)).map((d) => ({ due: d, policy_id: p.id, insurer: p.insurer, kind: p.kind, amount: money(p.premium), entity_id: p.entity_id })) : [])).sort((a, b) => a.due.localeCompare(b.due));
   return { life, health, uninsured, premium_calendar: calendar, annual_premiums: money(policies.reduce((s, p) => s + Number(p.premium) * (FREQ[p.premium_frequency] ?? 1), 0)) };
 }
 
@@ -212,3 +212,9 @@ export async function successionGaps(c: pg.PoolClient, familyId: string, day = t
   return { as_of: day, assets: assets.length, nominated: assets.filter((a) => noms.some((n) => n.asset_type === a.asset_type && n.asset_id === a.asset_id)).length, gaps, documents: docs.map((d) => ({ ...d, executed_on: iso(d.executed_on), review_due: iso(d.review_due), overdue: !!d.review_due && iso(d.review_due)! < day })) };
 }
 export { notifyTask };
+
+/** Premium dates up to a horizon; if none fall inside it, the next premium is still shown so the calendar never looks empty. */
+function nextPremiumDates(first: string, freq: string, until: string): string[] {
+  const ds = premiumDates(first, freq as any, until);
+  return ds.length ? ds : [first];
+}
