@@ -90,9 +90,24 @@ export async function bucketValues(c: pg.PoolClient, familyId: string, entityId?
   v.income += Number((await c.query("select coalesce(sum(coalesce((select value from property_valuations v where v.property_id=p.id order by valued_on desc limit 1), p.acquisition_cost) * o.ownership_pct / 100), 0) v from properties p join property_owners o on o.property_id=p.id where p.family_id=$1 and p.deleted_at is null and not p.self_occupied and ($2::uuid is null or o.entity_id=$2)", [familyId, entityId ?? null])).rows[0].v);
   v.growth += Number((await c.query("select coalesce(sum(coalesce((select value from private_marks m where m.private_investment_id=pi.id order by marked_on desc limit 1), pi.amount)), 0) v from private_investments pi where pi.family_id=$1 and pi.status <> 'written_off' and pi.instrument <> 'operating_business' and ($2::uuid is null or pi.entity_id=$2)", [familyId, entityId ?? null])).rows[0].v);
   v.liquidity += Number((await c.query("select coalesce(sum(balance),0) v from bank_accounts where family_id=$1 and deleted_at is null and type <> 'card' and ($2::uuid is null or entity_id=$2)", [familyId, entityId ?? null])).rows[0].v);
-  // not added to `rows`: like a property, a deposit isn't a tradeable holding a rebalance proposal can sell to fix a breach
+  // lifestyle items carry their own bucket (art, jewellery, vehicles, watches ... default growth); an item left out of net worth is not counted
+  const life = (await c.query("select bucket, current_value v from lifestyle_assets where family_id=$1 and deleted_at is null and include_in_net_worth and ($2::uuid is null or entity_id=$2)", [familyId, entityId ?? null])).rows;
+  for (const l of life) v[(l.bucket as Bucket) ?? "growth"] += Number(l.v ?? 0);
+  // insurance: one value per active policy (the fund value, else the surrender value), as net worth counts it; cash you could get back, so liquidity
+  v.liquidity += Number((await c.query("select coalesce(sum(coalesce(fund_value, surrender_value, 0)), 0) v from insurance_policies where family_id=$1 and deleted_at is null and status='active' and ($2::uuid is null or entity_id=$2)", [familyId, entityId ?? null])).rows[0].v);
+  // not added to rows: like a property, a deposit isn't a tradeable holding a rebalance proposal can sell to fix a breach
   for (const d of await activeDepositValues(c, familyId, entityId)) v[d.bucket as Bucket] += d.value;
   return { v, rows };
+}
+/** Net worth items that belong to no bucket: a self-occupied home and operating businesses. Shown on the dashboard so the buckets reconcile to net worth. */
+export async function notInBuckets(c: pg.PoolClient, familyId: string) {
+  const homes = (await c.query("select p.name, coalesce((select value from property_valuations v where v.property_id=p.id order by valued_on desc limit 1), p.acquisition_cost) v from properties p where p.family_id=$1 and p.deleted_at is null and p.self_occupied", [familyId])).rows
+    .map((r) => ({ name: r.name, kind: "home", value: Number(r.v ?? 0) }));
+  const businesses = (await c.query("select co.name, coalesce(round(pi.business_profit * pi.business_multiple * coalesce(pi.holding_pct, 100) / 100, 2), (select value from private_marks m where m.private_investment_id=pi.id order by marked_on desc limit 1), pi.amount) v from private_investments pi left join private_companies co on co.id=pi.company_id where pi.family_id=$1 and pi.status <> 'written_off' and pi.instrument = 'operating_business'", [familyId])).rows
+    .map((r) => ({ name: r.name ?? "operating business", kind: "business", value: Number(r.v ?? 0) }));
+  const items = [...homes, ...businesses];
+  const total = items.reduce((s, x) => s + x.value, 0);
+  return { total: total.toFixed(2), items: items.map((x) => ({ ...x, value: x.value.toFixed(2) })) };
 }
 /** Tax rate for a sale today from tax_rules (data): term by the holding's oldest lot against the class's long-term threshold. */
 async function saleTax(c: pg.PoolClient, h: any, gain: number, slabRate: number) {
