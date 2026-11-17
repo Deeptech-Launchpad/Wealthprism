@@ -1,4 +1,4 @@
-import { bucketTargets, goalView } from "../lib/allocation.js";
+import { bucketTargets, goalView, bucketValues as bucketValuesFor, notInBuckets } from "../lib/allocation.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireFamily, requireRole } from "../lib/auth.js";
@@ -117,15 +117,9 @@ export default async function routes(app: FastifyInstance) {
     return out;
   }));
 
+  // one calculation for the dashboard, the drift view and the reports (lib/allocation.ts)
   async function bucketValues(c: any, familyId: string) {
-    const rows = (await c.query(HOLDINGS_SQL)).rows;
-    const v: Record<string, number> = { liquidity: 0, income: 0, growth: 0 };
-    for (const r of rows) v[r.bucket] += Number(r.value);
-    v.income += Number((await c.query("select coalesce(sum((select value from property_valuations v where v.property_id = p.id order by valued_on desc limit 1)),0) as v from properties p where p.deleted_at is null and not p.self_occupied")).rows[0].v);
-    v.growth += Number((await c.query("select coalesce(sum(coalesce((select value from private_marks m where m.private_investment_id = pi.id order by marked_on desc limit 1), pi.amount)),0) as v from private_investments pi where pi.status <> 'written_off'")).rows[0].v);
-    v.liquidity += Number((await c.query("select coalesce(sum(balance),0) as v from bank_accounts where deleted_at is null and type <> 'card'")).rows[0].v);
-    for (const d of await activeDepositValues(c, familyId)) v[d.bucket] += d.value;
-    return v as { liquidity: number; income: number; growth: number };
+    return (await bucketValuesFor(c, familyId)).v as { liquidity: number; income: number; growth: number };
   }
 
   app.get("/buckets/drift", async (req) => withFamily(req.family!.familyId, async (c) => {
@@ -185,6 +179,7 @@ export default async function routes(app: FastifyInstance) {
       rent: { due: money(rent.due), received_count: Number(rent.received), overdue_count: Number(rent.overdue) },
       capital_gains_ytd: money(gains.g),
       buckets: bucketDrift(v, { liquidity: +t.liquidity_pct, income: +t.income_pct, growth: +t.growth_pct, driftThresholdPp: +t.drift_threshold_pp }).map((s) => ({ ...s, value: money(s.value) })),
+      not_in_buckets: await notInBuckets(c, req.family!.familyId),
       by_entity: Object.entries(byEntity).map(([entity_id, e]) => ({ entity_id, name: e.name, net_worth: money(e.value) })),
       attention: attention.map((x) => ({ ...x, amount: x.amount === null ? null : money(x.amount) })),
     };
