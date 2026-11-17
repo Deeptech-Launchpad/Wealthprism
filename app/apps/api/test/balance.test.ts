@@ -121,7 +121,7 @@ describe("insurance", () => {
     await run((c) => syncOutflows(c, FAMILY, TODAY));
     const o = await run(async (c) => (await c.query("select status, amount, due_date::text from committed_outflows where family_id=$1 and source_type='insurance_policy' and source_id=$2", [FAMILY, HEALTH])).rows[0]);
     expect(o).toMatchObject({ status: "pending", amount: "2400.00", due_date: "2026-09-28" });
-    const p = await send("POST", `/insurance-policies/${HEALTH}/premium-paid`, { paid_on: "2026-09-27" }); expect(p.code).toBe(200); expect(p.body.next_premium_due).toBe("2027-09-28");
+    const p = await send("POST", `/insurance-policies/${HEALTH}/premium-paid`, { paid_on: "2026-09-27", bank_account_id: "89898989-0000-0000-0000-000000000002" }); expect(p.code).toBe(200); expect(p.body.next_premium_due).toBe("2027-09-28");
     const o2 = await run(async (c) => (await c.query("select status from committed_outflows where family_id=$1 and source_type='insurance_policy' and source_id=$2 and due_date='2026-09-28'", [FAMILY, HEALTH])).rows[0]);
     expect(o2.status).toBe("done");
     expect((await run((c) => gen("premium_due").run(c, FAMILY, TODAY))).drafts.length).toBe(1);
