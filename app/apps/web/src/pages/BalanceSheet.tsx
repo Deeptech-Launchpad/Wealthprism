@@ -4,6 +4,7 @@ import { useApi } from "../lib/useApi";
 import { api, apiJson, inr, session } from "../lib/api";
 import { Card, Pill, Status, fmtDate } from "../components";
 import { AddAsset } from "./AddAsset";
+import { LumpSums } from "./LumpSums";
 
 // Balance sheet (PRD 3.11): net worth with look-through, liabilities and schedules, insurance adequacy, lifestyle assets, ownership graph, succession gaps.
 const inp = { background: "#fff", color: "var(--ink)", borderColor: "var(--line)" } as const;
@@ -26,7 +27,7 @@ export function BalanceSheet() {
     {tab === "Net worth" && <NetWorth />}
     {tab === "Liabilities" && <Liabilities />}
     {tab === "Insurance" && <Insurance />}
-    {tab === "Physical assets" && <Lifestyle />}
+    {tab === "Physical assets" && <><Lifestyle /><LumpSums /></>}
     {tab === "Ownership" && <Ownership />}
     {tab === "Succession" && <Succession />}
   </>);

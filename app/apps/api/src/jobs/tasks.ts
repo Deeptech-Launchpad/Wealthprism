@@ -109,6 +109,11 @@ export const generators: Generator[] = [
     return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "real_estate", title: `Property tax ${iso(r.due_date)! < today ? "overdue" : "due"}: ${r.property}`, reason: `${r.authority} · ${r.period} · due ${fmt(r.due_date)}`, amount: Number(r.amount), due_date: iso(r.due_date), severity: (iso(r.due_date)! < today ? 1 : 2) as 1 | 2, source_type: "property_tax", source_id: r.id, verification: "pending" as const })),
       resolved: (await c.query("select id from property_taxes where status='paid'")).rows.map((r) => ({ source_type: "property_tax", source_id: r.id })) };
   } },
+  { name: "lump_sum_unmatched", run: async (c, fam, today) => {
+    const rows = (await c.query(`select l.id, l.amount, l.reason, l.entry_date::text d, b.entity_id, b.bank from lump_sums l join bank_accounts b on b.id=l.bank_account_id where l.family_id=$1 and l.status='pending' and l.deleted_at is null and l.entry_date <= $2::date - 30`, [fam, today])).rows;
+    return { drafts: rows.map((r) => ({ entity_id: r.entity_id, module: "balance_sheet", title: `Lump sum not seen in a bank statement — ${r.bank} ${r.reason}`, reason: `₹${Number(r.amount).toLocaleString("en-IN")} entered on ${r.d} is in the balance, but no matching bank line has arrived. Upload the statement, or check the entry.`, amount: Number(r.amount), due_date: r.d, severity: 2 as const, source_type: "lump_sum", source_id: r.id, verification: "pending" as const })),
+      resolved: (await c.query("select id from lump_sums where status <> 'pending' or deleted_at is not null or entry_date > $1::date - 30", [today])).rows.map((r) => ({ source_type: "lump_sum", source_id: r.id })) };
+  } },
   { name: "gst_filing_due", run: async (c, fam, today) => {
     const rows = (await c.query(`select r.id, r.form, r.period_month, r.due_date, r.tax_amount, g.gstin, g.entity_id, e.name entity from gst_returns r join entity_gstins g on g.id=r.entity_gstin_id join entities e on e.id=g.entity_id
         where r.status='due' and r.due_date <= $1::date + 10`, [today])).rows;
