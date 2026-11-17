@@ -1,3 +1,4 @@
+import { matchLumpSums } from "../lib/lumpsums.js";
 import { reconcileHoldingReceipts } from "../lib/holdingreceipts.js";
 import { reconcileSavingsDeposits } from "../lib/savings.js";
 import type { FastifyInstance } from "fastify";
@@ -243,6 +244,7 @@ export async function runImport(c: any, fam: string, userId: string | null, inpu
       log.push({ deposits_matched: await reconcileDeposits(c, fam) });
       log.push({ bond_payments_matched: await reconcileHoldingReceipts(c, fam) });
       log.push({ savings_deposits: await reconcileSavingsDeposits(c, fam) });
+      log.push({ lump_sums_verified: await matchLumpSums(c, fam) });
       await c.query("update import_jobs set source='bank_csv' where id=$1", [jobId]);
     } else if (kind === "pms" || kind === "aif" || kind === "ecas") {
       const st = result.rows[0]; if (!st) throw new Error(`${kind === "ecas" ? "e-CAS" : kind.toUpperCase()} statement could not be read`);

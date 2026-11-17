@@ -25,7 +25,8 @@ import analyticsRoutes from "./routes/analytics.js";
 import bankingRoutes, { aaPublicRoutes } from "./routes/banking.js";
 import ingestRoutes, { ingestPublicRoutes } from "./routes/ingest.js";
 import allocationRoutes from "./routes/allocation.js";
-import assetRoutes from "./routes/assets.js";
+import assetRoutes from "./routes/assets.js";
+import lumpSumRoutes from "./routes/lumpsums.js";
 import savingsRoutes from "./routes/savings.js";
 import investmentsRoutes from "./routes/investments.js";
 import startupsRoutes from "./routes/startups.js";
@@ -105,6 +106,7 @@ export function buildApp() {
   app.register(ingestPublicRoutes, { prefix: "/api/v1" });
   app.register(allocationRoutes, { prefix: "/api/v1" });
   app.register(assetRoutes, { prefix: "/api/v1" });
+  app.register(lumpSumRoutes, { prefix: "/api/v1" });
   app.register(savingsRoutes, { prefix: "/api/v1" });
   app.register(globalRoutes, { prefix: "/api/v1" });
   app.register(investmentsRoutes, { prefix: "/api/v1" });
