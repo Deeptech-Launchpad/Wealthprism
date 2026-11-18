@@ -13,6 +13,15 @@ const failText = async (r: Response, fallback: string) => ((await r.json().catch
 export async function login(email: string, password: string): Promise<Session> {
   const r = await fetch(`${API_URL}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
   if (!r.ok) throw new Error(await failText(r, "Login failed"));
+  const s = await r.json();
+  // the account has two-step sign-in on: the page asks for the 6-digit code next (verifyMfa)
+  if (s.mfa_required) return s;
+  session.set(s); if (s.families[0]) session.setFamily(s.families[0].id); return s;
+}
+/** Completes a sign-in that needed the second step: the 6-digit code from the authenticator app. */
+export async function verifyMfa(mfaToken: string, code: string): Promise<Session> {
+  const r = await fetch(`${API_URL}/auth/mfa/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mfa_token: mfaToken, code }) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).title ?? "Wrong code");
   const s = await r.json(); session.set(s); if (s.families[0]) session.setFamily(s.families[0].id); return s;
 }
 /** Accept an invite: sets the password, then logs in (the accept endpoint itself returns no session). */
