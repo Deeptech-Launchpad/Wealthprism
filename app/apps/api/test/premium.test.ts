@@ -67,3 +67,18 @@ describe("premium paid reduces the bank balance once, and is recorded", () => {
     expect(cal.some((x) => x.policy_id === policyId && x.due === far)).toBe(true);
   });
 });
+
+describe("once a year: a second payment for the same year is refused, and the row shows the period paid", () => {
+  it("after a payment, the next click is refused with the settled-for-this-year message, and the row shows the due date that was paid", async () => {
+    // start from the policy's own due date (an earlier test moved it)
+    await withFamily(FAMILY, async (c) => c.query("update insurance_policies set next_premium_due=$2 where id=$1", [policyId, dueBefore]));
+    const first = await post(`/insurance-policies/${policyId}/premium-paid`, { bank_account_id: ICICI, paid_on: "2026-11-17" });
+    expect(first.code).toBe(200);
+    const again = await post(`/insurance-policies/${policyId}/premium-paid`, { bank_account_id: ICICI, paid_on: "2026-11-18" });
+    expect(again.code).toBe(422);
+    expect(again.body.title).toMatch(/already settled for this year/);
+    expect(again.body.title).toMatch(/can be recorded from/);
+    const p = ((await get("/insurance-policies")).body as any[]).find((x) => x.id === policyId);
+    expect(p.last_paid_due).toBe(dueBefore);
+  });
+});
