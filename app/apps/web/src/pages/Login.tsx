@@ -14,7 +14,7 @@ export function Login() {
   // whether the server accepts new sign-ups (ALLOW_SIGNUP); when it does not, the form is hidden and the page says to ask for an invite
   const [signupOpen, setSignupOpen] = useState(false);
   useEffect(() => { fetch(`${API_URL}/auth/config`).then((r) => r.json()).then((j) => setSignupOpen(!!j.signup_open)).catch(() => setSignupOpen(false)); }, []);
-  const [newFamilyName, setNewFamilyName] = useState(""); const [fullName, setFullName] = useState(""); const [regEmail, setRegEmail] = useState(""); const [regPw, setRegPw] = useState(""); const [creating, setCreating] = useState(false); const [createErr, setCreateErr] = useState("");
+  const [newFamilyName, setNewFamilyName] = useState(""); const [fullName, setFullName] = useState(""); const [regEmail, setRegEmail] = useState(""); const [regPw, setRegPw] = useState(""); const [showRegPw, setShowRegPw] = useState(false); const [creating, setCreating] = useState(false); const [createErr, setCreateErr] = useState("");
   const resetExtras = () => { setNeedsOwner(false); setCreateErr(""); };
   const createOwnerAccount = async () => {
     if (!newFamilyName.trim()) return; setCreating(true); setCreateErr("");
@@ -52,7 +52,7 @@ export function Login() {
       {wantsNew && signupOpen && <div className="card" style={{ marginTop: 12 }}>
         <div className="small mute">Create a brand-new account and become its owner. If {regEmail || "this email"} already has an account, this will fail — sign in above instead, or use Forgot password.</div>
         <input type="email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} placeholder="Email" />
-        <input type="password" value={regPw} onChange={(e) => setRegPw(e.target.value)} placeholder="Password (at least 8 characters)" />
+        <div style={{ position: "relative" }}><input type={showRegPw ? "text" : "password"} value={regPw} onChange={(e) => setRegPw(e.target.value)} placeholder="Password (at least 8 characters)" style={{ width: "100%", paddingRight: 36 }} /><button type="button" onClick={() => setShowRegPw(!showRegPw)} aria-label={showRegPw ? "Hide password" : "Show password"} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, cursor: "pointer", color: "var(--mute)" }}>{showRegPw ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
         <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name" />
         <input value={newFamilyName} onChange={(e) => setNewFamilyName(e.target.value)} placeholder="New family / account name" />
         {createErr && <div className="err">{createErr}</div>}
