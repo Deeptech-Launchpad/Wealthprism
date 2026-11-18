@@ -20,6 +20,9 @@ export default async function routes(app: FastifyInstance) {
   });
   /** Self-service sign-up (FEAT: open signup — revert by removing this route and its web form if invite-only is wanted
    *  again): a brand-new email creates its own user, its own family, and becomes that family's owner in one step. */
+  // public: lets the login page show or hide sign-up. Open unless the server sets ALLOW_SIGNUP=false (invite-only).
+  app.get("/auth/config", async () => ({ signup_open: process.env.ALLOW_SIGNUP !== "false" }));
+
   app.post("/auth/register", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     // a public server turns this off (ALLOW_SIGNUP=false); owners are then created with the create-owner command or invited by an existing owner
     if (process.env.ALLOW_SIGNUP === "false") return void reply.code(403).send({ title: "Sign-up is closed on this server. Ask an owner to invite you.", status: 403 });

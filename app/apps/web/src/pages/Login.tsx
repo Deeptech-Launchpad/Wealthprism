@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
-import { login, register, apiJson, session, type Session } from "../lib/api";
+import { login, register, apiJson, session, API_URL, type Session } from "../lib/api";
 export function Login() {
   // the demo user is pre-filled only when running locally (vite dev); a built, deployed copy starts with empty fields
   const [email, setEmail] = useState(import.meta.env.DEV ? "arjun@example.com" : ""); const [pw, setPw] = useState(import.meta.env.DEV ? "Prototype!2026" : ""); const [err, setErr] = useState(""); const [showPw, setShowPw] = useState(false); const nav = useNavigate();
@@ -11,6 +11,9 @@ export function Login() {
   // covers an existing account with the wrong password, and this app can't tell the two apart (nor should it hint at
   // which, same reason /auth/forgot-password never says whether an e-mail is registered)
   const [wantsNew, setWantsNew] = useState(false);
+  // whether the server accepts new sign-ups (ALLOW_SIGNUP); when it does not, the form is hidden and the page says to ask for an invite
+  const [signupOpen, setSignupOpen] = useState(false);
+  useEffect(() => { fetch(`${API_URL}/auth/config`).then((r) => r.json()).then((j) => setSignupOpen(!!j.signup_open)).catch(() => setSignupOpen(false)); }, []);
   const [newFamilyName, setNewFamilyName] = useState(""); const [fullName, setFullName] = useState(""); const [creating, setCreating] = useState(false); const [createErr, setCreateErr] = useState("");
   const resetExtras = () => { setNeedsOwner(false); setCreateErr(""); };
   const createOwnerAccount = async () => {
@@ -35,7 +38,7 @@ export function Login() {
       <button className="btn btn-p" type="submit">Sign in</button>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <Link className="small mute" to="/forgot-password">Forgot password?</Link>
-        <a className="small mute" style={{ cursor: "pointer" }} onClick={() => setWantsNew(!wantsNew)}>{wantsNew ? "I already have an account" : "New here? Create an account"}</a>
+        {signupOpen ? <a className="small mute" style={{ cursor: "pointer" }} onClick={() => setWantsNew(!wantsNew)}>{wantsNew ? "I already have an account" : "New here? Create an account"}</a> : <span className="small mute">Ask an owner to invite you</span>}
       </div>
       {import.meta.env.DEV && <div className="small mute">Seeded users: arjun / priya / ops / ca @example.com · Prototype!2026</div>}
     </form>
@@ -46,7 +49,7 @@ export function Login() {
         <button className="btn btn-p" type="button" disabled={creating || !newFamilyName.trim()} onClick={createOwnerAccount}>Create owner account</button>
         <button className="btn btn-s" type="button" style={{ marginTop: 8 }} onClick={() => nav("/")}>Continue to my account</button>
       </div>}
-      {wantsNew && <div className="card" style={{ marginTop: 12 }}>
+      {wantsNew && signupOpen && <div className="card" style={{ marginTop: 12 }}>
         <div className="small mute">Create a brand-new account and become its owner. If {email || "this email"} already has an account, this will fail — sign in above instead, or use Forgot password.</div>
         <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name" />
         <input value={newFamilyName} onChange={(e) => setNewFamilyName(e.target.value)} placeholder="New family / account name" />
