@@ -25,7 +25,7 @@ const make = (name: string, due: string, extra: any = {}) => call("POST", "/insu
 describe("insurance premiums", () => {
   it("refuses 'premium paid' when the next premium is more than 60 days away, and rolls the date on when it is near", async () => {
     const far = await make("ZZ Premium Far", day(200)); expect(far.code).toBe(201);
-    const refused = await call("POST", `/insurance-policies/${far.body.id}/premium-paid`, { bank_account_id: "89898989-0000-0000-0000-000000000002" }); expect(refused.code).toBe(422); expect(refused.body.title).toMatch(/days away/);
+    const refused = await call("POST", `/insurance-policies/${far.body.id}/premium-paid`, { bank_account_id: "89898989-0000-0000-0000-000000000002" }); expect(refused.code).toBe(422); expect(refused.body.title).toMatch(/already settled for this year/);
     expect((await call("GET", `/insurance-policies/${far.body.id}`)).body.next_premium_due).toBe(day(200));   // nothing moved
     const near = await make("ZZ Premium Near", day(20)); const ok = await call("POST", `/insurance-policies/${near.body.id}/premium-paid`, { bank_account_id: "89898989-0000-0000-0000-000000000002" });
     expect(ok.code).toBe(200); expect(Number(ok.body.next_premium_due.slice(0, 4))).toBe(Number(day(20).slice(0, 4)) + 1);
