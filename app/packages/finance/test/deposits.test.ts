@@ -47,3 +47,34 @@ describe("deposit foreclosure", () => {
     expect(foreclosureCreditMatches(1000, 1008)).toBe(true); expect(foreclosureCreditMatches(1000, 1020)).toBe(false);
   });
 });
+
+import { depositCurrentValue, fdMaturityValue, generateDepositSchedule } from "../src/index.js";
+
+describe("fd value: maturity vs current", () => {
+  // a 1,00,000 regular fd at 8% paying interest monthly for 1 year: 12 interest payments of 666.67 plus the principal back
+  const terms = { kind: "fd" as const, startDate: "2026-01-01", maturityDate: "2027-01-01", ratePct: 8, principal: 100000, payoutFrequency: "monthly" as const };
+  const sched = generateDepositSchedule(terms);
+  it("maturity value is the principal plus all the interest, not the principal alone", () => {
+    const m = fdMaturityValue(sched);
+    expect(m).toBeCloseTo(100000 + 12 * 666.67, 0);
+    expect(m).toBeGreaterThan(100000);
+  });
+  it("current value grows through the year and does not equal the maturity value until maturity", () => {
+    const m = fdMaturityValue(sched);
+    const mid = depositCurrentValue({ ...terms, interestPaid: 0 }, m, "2026-07-01");
+    expect(mid).toBeGreaterThan(100000); expect(mid).toBeLessThan(m);
+  });
+  it("interest already paid out is not counted twice: value falls back to about the principal", () => {
+    const m = fdMaturityValue(sched);
+    const paid = depositCurrentValue({ ...terms, interestPaid: 6 * 666.67 }, m, "2026-07-01");
+    const unpaid = depositCurrentValue({ ...terms, interestPaid: 0 }, m, "2026-07-01");
+    expect(paid).toBeLessThan(unpaid); expect(Math.abs(paid - 100000)).toBeLessThan(100);
+  });
+  it("a cumulative fd's value still grows from principal toward its compounded maturity", () => {
+    const cum = { ...terms, payoutFrequency: "at_maturity" as const };
+    const rows = generateDepositSchedule(cum);
+    const m = fdMaturityValue(rows);
+    expect(m).toBeGreaterThan(108000);
+    expect(depositCurrentValue({ ...cum, interestPaid: 0 }, m, "2027-01-01")).toBe(m);
+  });
+});

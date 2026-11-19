@@ -7,7 +7,7 @@ import { requireFamily, requireRole } from "../lib/auth.js";
 import { syncOutflows } from "../lib/balance.js";
 import { generateTasksFor } from "../jobs/tasks.js";
 import { withFamily, money } from "../lib/db.js";
-import { generateDepositSchedule, depositCurrentValue, interestSettled, estimateForeclosure, foreclosureEligibility } from "@fo/finance";
+import { generateDepositSchedule, depositCurrentValue, fdMaturityValue, interestSettled, estimateForeclosure, foreclosureEligibility } from "@fo/finance";
 
 const iso = (d: any) => (d ? new Date(d).toISOString().slice(0, 10) : null);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -62,7 +62,10 @@ async function depositView(c: any, row: any) {
   const receipts = (await c.query("select r.*, r.due_date::text as due_date, r.received_on::text as received_on from deposit_receipts r where r.deposit_id=$1 order by r.due_date", [row.id])).rows
     .map((r: any) => ({ ...r, due_date: iso(r.due_date), received_on: iso(r.received_on), expected_amount: money(r.expected_amount), received_amount: money(r.received_amount) }));
   const maturityRow = receipts.find((r: any) => r.kind === "maturity");
-  const maturityAmount = maturityRow ? Number(maturityRow.expected_amount) : Number(row.principal ?? 0);
+  // total the deposit pays over its life: principal + every interest payment (regular fd), or the compounded / instalment maturity
+  const maturityAmount = receipts.some((r: any) => r.kind === "interest" || r.kind === "maturity") ? fdMaturityValue(receipts.map((r: any) => ({ kind: r.kind, expectedAmount: Number(r.expected_amount) }))) : Number(row.principal ?? 0);
+  // interest a regular fd has already paid out (counted as cash in the bank account, so it is not part of the deposit's value)
+  const interestPaidOut = receipts.filter((r: any) => r.kind === "interest").reduce((t: number, r: any) => t + Number(r.received_amount ?? 0), 0);
   const today = new Date().toISOString().slice(0, 10);
   const startDate = iso(row.start_date)!, maturityDate = iso(row.maturity_date)!;
   const fc = receipts.find((r: any) => r.kind === "foreclosure");
@@ -91,7 +94,7 @@ async function depositView(c: any, row: any) {
     credit_receipt_id: fc?.id ?? null, expected_amount: fc?.expected_amount ?? null, received_amount: fc?.received_amount ?? null, credit_status: fc?.status ?? null, verified_by_statement: !!fc?.bank_txn_ref, summary } : null;
   return { ...row, foreclose, closure, start_date: startDate, maturity_date: maturityDate, principal: row.principal == null ? null : money(row.principal),
     installment_amount: row.installment_amount == null ? null : money(row.installment_amount), rate_pct: Number(row.rate_pct),
-    current_value: money(depositCurrentValue({ kind: row.kind, principal: row.principal, startDate, maturityDate, ratePct: Number(row.rate_pct), paid: receipts.filter((r: any) => r.kind === "contribution" && Number(r.received_amount) > 0).map((r: any) => ({ a: r.received_amount, on: r.received_on ?? r.due_date })) }, maturityAmount, today)), maturity_value: money(maturityAmount), matured_on: row.status === "closed" ? (maturityRow?.received_on ?? null) : null, maturity_receipt_id: row.status === "active" && maturityRow && maturityRow.status !== "received" ? maturityRow.id : null, days_to_maturity: Math.round((Date.parse(maturityDate) - Date.parse(today)) / 86400000), receipts, locked: lock.locked, locked_reason: lock.reason };
+    current_value: money(depositCurrentValue({ kind: row.kind, principal: row.principal, startDate, maturityDate, ratePct: Number(row.rate_pct), paid: receipts.filter((r: any) => r.kind === "contribution" && Number(r.received_amount) > 0).map((r: any) => ({ a: r.received_amount, on: r.received_on ?? r.due_date })), interestPaid: interestPaidOut }, maturityAmount, today)), maturity_value: money(maturityAmount), matured_on: row.status === "closed" ? (maturityRow?.received_on ?? null) : null, maturity_receipt_id: row.status === "active" && maturityRow && maturityRow.status !== "received" ? maturityRow.id : null, days_to_maturity: Math.round((Date.parse(maturityDate) - Date.parse(today)) / 86400000), receipts, locked: lock.locked, locked_reason: lock.reason };
 }
 
 export default async function routes(app: FastifyInstance) {

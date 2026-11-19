@@ -26,7 +26,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  *  only; real value is whatever a future bank-statement match confirms. Works for both kinds: an fd paying interest
  *  out periodically has maturityAmount === principal, so this correctly stays flat at `principal` the whole time;
  *  a cumulative fd or an rd grows linearly toward its computed maturity value. */
-export function depositCurrentValue(d: { kind: "fd" | "rd"; principal?: number | null; startDate: string; maturityDate: string; ratePct?: number | null; paid?: { a: number | string; on: string }[] | null }, maturityAmount: number, today: string): number {
+export function depositCurrentValue(d: { kind: "fd" | "rd"; principal?: number | null; startDate: string; maturityDate: string; ratePct?: number | null; paid?: { a: number | string; on: string }[] | null; interestPaid?: number | null }, maturityAmount: number, today: string): number {
   // an rd is worth what has actually been paid in plus simple interest on each instalment since it was paid — an
   // instalment nobody has confirmed is still sitting in the bank account, so counting it here would double it
   if (d.kind === "rd" && d.paid) {
@@ -34,9 +34,17 @@ export function depositCurrentValue(d: { kind: "fd" | "rd"; principal?: number |
     return r2(d.paid.reduce((s, p) => { const days = Math.max(0, (Date.parse(today) - Date.parse(String(p.on).slice(0, 10))) / 86400000); return s + Number(p.a) * (1 + rate * days / 365); }, 0));
   }
   const startValue = d.kind === "fd" ? Number(d.principal ?? 0) : 0;
-  const totalDays = (Date.parse(d.maturityDate) - Date.parse(d.startDate)) / 86400000; if (totalDays <= 0) return maturityAmount;
+  // interest a regular fd has already paid out to the bank account is no longer in the deposit (it is counted as cash), so it comes off the accrued value
+  const paidOut = d.kind === "fd" ? Number(d.interestPaid ?? 0) : 0;
+  const totalDays = (Date.parse(d.maturityDate) - Date.parse(d.startDate)) / 86400000; if (totalDays <= 0) return r2(maturityAmount - paidOut);
   const elapsed = Math.min(totalDays, Math.max(0, (Date.parse(today) - Date.parse(d.startDate)) / 86400000));
-  return r2(startValue + (maturityAmount - startValue) * (elapsed / totalDays));
+  return r2(startValue + (maturityAmount - startValue) * (elapsed / totalDays) - paidOut);
+}
+
+/** What an fd pays in total over its life: the principal plus every interest payment (regular fd) or the compounded amount (cumulative).
+ *  The maturity receipt alone is only the principal for a regular fd, which is why the maturity value used to show the principal. */
+export function fdMaturityValue(receipts: { kind: string; expectedAmount: number }[]): number {
+  return r2(receipts.filter((r) => r.kind === "interest" || r.kind === "maturity").reduce((s, r) => s + Number(r.expectedAmount), 0));
 }
 
 /** Banks credit interest net of TDS (10%), so ₹540 against an expected ₹600 is a complete payment, not a short one. */
