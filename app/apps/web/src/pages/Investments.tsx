@@ -48,7 +48,7 @@ export function Investments() {
 
 const inp = { background: "#fff", color: "var(--ink)", borderColor: "var(--line)" } as const;
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field">{label}{children}</label>; }
-const EMPTY_DEPOSIT = { entity_id: "", kind: "fd", type_code: "fd_regular", bank: "", account_no: "", bucket: "liquidity", rate_pct: "", start_date: "", maturity_date: "", principal: "", payout_frequency: "at_maturity", installment_amount: "", tenure_months: "", payout_bank_account_id: "", tds_applicable: true };
+const EMPTY_DEPOSIT = { entity_id: "", kind: "fd", type_code: "fd_regular", bank: "", account_no: "", bucket: "liquidity", rate_pct: "", start_date: "", maturity_date: "", tenure_y: "", tenure_m: "", principal: "", payout_frequency: "at_maturity", installment_amount: "", tenure_months: "", payout_bank_account_id: "", tds_applicable: true };
 
 /** "Add asset" step 1 (roadmap item): fixed & recurring deposits only for now — manual entry, generates its own
  *  expected-receipts schedule on save. Bank-statement matching against those receipts is a later step. */
@@ -82,7 +82,7 @@ function Deposits({ startType, onStarted }: { startType?: string | null; onStart
     try {
       const body: any = { type_code: f.type_code, bank: f.bank, bucket: f.bucket, rate_pct: Number(f.rate_pct), start_date: f.start_date, tds_applicable: f.tds_applicable };
       if (editId) { body.account_no = f.account_no || null; body.payout_bank_account_id = f.payout_bank_account_id || null; } else { body.entity_id = f.entity_id; body.kind = f.kind; body.account_no = f.account_no || undefined; body.payout_bank_account_id = f.payout_bank_account_id || undefined; }
-      if (f.kind === "fd") { body.principal = Number(f.principal); body.maturity_date = f.maturity_date; body.payout_frequency = f.payout_frequency; }
+      if (f.kind === "fd") { if (!f.maturity_date) return setErr("Pick the tenure (years and months) so the maturity date can be worked out"); body.principal = Number(f.principal); body.maturity_date = f.maturity_date; body.payout_frequency = f.payout_frequency; }
       else { body.installment_amount = Number(f.installment_amount); body.tenure_months = Number(f.tenure_months); }
       await api(editId ? `/deposits/${editId}` : "/deposits", { method: editId ? "PATCH" : "POST", body: JSON.stringify(body) });
       setMsg(editId ? "Deposit updated" : ""); setAdd(false); setEditId(null); setLockedWhy(null); setF(EMPTY_DEPOSIT); refetch();
@@ -90,7 +90,9 @@ function Deposits({ startType, onStarted }: { startType?: string | null; onStart
   };
   const startEdit = (d: any) => {
     setErr(""); setMsg(""); setEditId(d.id); setLockedWhy(d.locked ? d.locked_reason : null); setAdd(true);
-    setF({ entity_id: d.entity_id, kind: d.kind, type_code: d.type_code, bank: d.bank, account_no: d.account_no ?? "", bucket: d.bucket, rate_pct: String(d.rate_pct), start_date: d.start_date, maturity_date: d.maturity_date, principal: d.principal ?? "", payout_frequency: d.payout_frequency, installment_amount: d.installment_amount ?? "", tenure_months: d.tenure_months == null ? "" : String(d.tenure_months), payout_bank_account_id: d.payout_bank_account_id ?? "", tds_applicable: d.tds_applicable });
+    // the tenure shown is worked out back from the stored dates (whole months between start and maturity)
+    const mm = d.kind === "fd" && d.start_date && d.maturity_date ? Math.max(0, (Number(d.maturity_date.slice(0, 4)) - Number(d.start_date.slice(0, 4))) * 12 + Number(d.maturity_date.slice(5, 7)) - Number(d.start_date.slice(5, 7))) : 0;
+    setF({ entity_id: d.entity_id, kind: d.kind, type_code: d.type_code, bank: d.bank, account_no: d.account_no ?? "", bucket: d.bucket, rate_pct: String(d.rate_pct), start_date: d.start_date, maturity_date: d.maturity_date, tenure_y: mm ? String(Math.floor(mm / 12)) : "", tenure_m: mm ? String(mm % 12) : "", principal: d.principal ?? "", payout_frequency: d.payout_frequency, installment_amount: d.installment_amount ?? "", tenure_months: d.tenure_months == null ? "" : String(d.tenure_months), payout_bank_account_id: d.payout_bank_account_id ?? "", tds_applicable: d.tds_applicable });
   };
   const remove = async (d: any) => {
     if (!confirm(`Delete ${d.bank} ${d.kind.toUpperCase()}${d.account_no ? ` ${d.account_no}` : ""}? Its schedule and reminders are removed too.`)) return;
@@ -102,8 +104,12 @@ function Deposits({ startType, onStarted }: { startType?: string | null; onStart
   const pickKind = (kind: string) => { const t = (types.data ?? []).find((x) => x.code === (kind === "fd" ? "fd_regular" : "rd_regular")); setF({ ...f, kind, type_code: t?.code ?? (kind === "fd" ? "fd_regular" : "rd_regular"), ...(t?.default_payout && kind === "fd" ? { payout_frequency: t.default_payout } : {}), tds_applicable: t ? t.default_tds : f.tds_applicable }); };
   const fixedTenure = (t: any) => (t?.min_tenure_months && t.min_tenure_months === t.max_tenure_months ? t.min_tenure_months : null);
   const addMonthsTo = (d: string, n: number) => { if (!d) return ""; const [y, m, dd] = d.split("-").map(Number); const tot = m - 1 + n; const ny = y + Math.floor(tot / 12); const nm = (tot % 12) + 1; const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate(); return `${ny}-${String(nm).padStart(2, "0")}-${String(Math.min(dd, last)).padStart(2, "0")}`; };
-  const pickStart = (v: string) => { const n = f.kind === "fd" && !editId ? fixedTenure(curType) : null; setF({ ...f, start_date: v, ...(n && v ? { maturity_date: addMonthsTo(v, n) } : {}) }); };
-  const pickType = (code: string) => { const t = (types.data ?? []).find((x) => x.code === code); setF({ ...f, type_code: code, ...(t && !editId && t.default_rate_pct != null ? { rate_pct: String(t.default_rate_pct) } : {}), ...(t && !editId && f.kind === "fd" && fixedTenure(t) && f.start_date ? { maturity_date: addMonthsTo(f.start_date, fixedTenure(t)) } : {}), ...(t?.default_payout && f.kind === "fd" ? { payout_frequency: t.default_payout } : {}), ...(t && !editId ? { tds_applicable: t.default_tds } : {}), ...(t?.min_tenure_months && t.min_tenure_months === t.max_tenure_months ? (f.kind === "rd" ? { tenure_months: String(t.min_tenure_months) } : {}) : {}) }); };
+  // an fd's tenure is picked as years + months; the maturity date is always start + tenure, so the two cannot disagree
+  const tenureTotal = (x: { tenure_y: any; tenure_m: any }) => Number(x.tenure_y || 0) * 12 + Number(x.tenure_m || 0);
+  const tenureFields = (total: number, start: string) => ({ tenure_y: total ? String(Math.floor(total / 12)) : "", tenure_m: total ? String(total % 12) : "", maturity_date: start && total > 0 ? addMonthsTo(start, total) : "" });
+  const setTenure = (y: string, m: string) => { const total = Number(y || 0) * 12 + Number(m || 0); setF({ ...f, tenure_y: y, tenure_m: m, maturity_date: f.start_date && total > 0 ? addMonthsTo(f.start_date, total) : "" }); };
+  const pickStart = (v: string) => { const fx = f.kind === "fd" && !editId ? fixedTenure(curType) : null; const total = fx ?? (f.kind === "fd" ? tenureTotal(f) : 0); setF({ ...f, start_date: v, ...(fx ? tenureFields(fx, v) : f.kind === "fd" && v && total > 0 ? { maturity_date: addMonthsTo(v, total) } : {}) }); };
+  const pickType = (code: string) => { const t = (types.data ?? []).find((x) => x.code === code); setF({ ...f, type_code: code, ...(t && !editId && t.default_rate_pct != null ? { rate_pct: String(t.default_rate_pct) } : {}), ...(t && !editId && f.kind === "fd" && fixedTenure(t) ? tenureFields(fixedTenure(t), f.start_date) : {}), ...(t?.default_payout && f.kind === "fd" ? { payout_frequency: t.default_payout } : {}), ...(t && !editId ? { tds_applicable: t.default_tds } : {}), ...(t?.min_tenure_months && t.min_tenure_months === t.max_tenure_months ? (f.kind === "rd" ? { tenure_months: String(t.min_tenure_months) } : {}) : {}) }); };
   const todayStr = new Date().toISOString().slice(0, 10);
   const rs = (v: any) => "₹" + Number(v ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
   const loadEstimate = async (n: any) => {
@@ -194,10 +200,21 @@ function Deposits({ startType, onStarted }: { startType?: string | null; onStart
         <Field label={curType?.govt_scheme ? "Post office / bank" : "Bank"}><input style={inp} value={f.bank} placeholder={curType?.govt_scheme ? "e.g. India Post, SBI" : ""} onChange={(e) => setF({ ...f, bank: e.target.value })} /></Field>
         <Field label="Account / certificate no."><input style={inp} value={f.account_no} onChange={(e) => setF({ ...f, account_no: e.target.value })} /></Field>
         <Field label="Rate % p.a."><input style={inp} type="number" step="0.01" disabled={lockedTerm} value={f.rate_pct} onChange={(e) => setF({ ...f, rate_pct: e.target.value })} onWheel={(e) => (e.target as HTMLInputElement).blur()} /></Field>
-        <Field label="Start date"><input style={inp} type="date" disabled={lockedTerm} value={f.start_date} onChange={(e) => pickStart(e.target.value)} /></Field>
+        <Field label="Commencement date"><input style={inp} type="date" disabled={lockedTerm} value={f.start_date} onChange={(e) => pickStart(e.target.value)} /></Field>
         {f.kind === "fd" ? <>
           <Field label="Principal (₹)"><input style={inp} type="number" disabled={lockedTerm} value={f.principal} onChange={(e) => setF({ ...f, principal: e.target.value })} onWheel={(e) => (e.target as HTMLInputElement).blur()} /></Field>
-          <Field label="Maturity date"><input style={inp} type="date" disabled={lockedTerm} value={f.maturity_date} onChange={(e) => setF({ ...f, maturity_date: e.target.value })} /></Field>
+          <Field label="Tenure">
+            <div style={{ display: "flex", gap: 8 }}>
+              <select style={inp} disabled={lockedTerm || fixedTenure(curType) != null} value={f.tenure_y} onChange={(e) => setTenure(e.target.value, f.tenure_m)}>
+                <option value="">Years</option>{Array.from({ length: Math.floor((curType?.max_tenure_months ?? 360) / 12) + 1 }, (_, i) => <option key={i} value={String(i)}>{i} {i === 1 ? "year" : "years"}</option>)}
+              </select>
+              <select style={inp} disabled={lockedTerm || fixedTenure(curType) != null} value={f.tenure_m} onChange={(e) => setTenure(f.tenure_y, e.target.value)}>
+                <option value="">Months</option>{Array.from({ length: 12 }, (_, i) => <option key={i} value={String(i)}>{i} {i === 1 ? "month" : "months"}</option>)}
+              </select>
+            </div>
+            <div className="small mute" style={{ marginTop: 4 }}>{f.maturity_date ? <>Matures on <b>{fmtDate(f.maturity_date)}</b></> : "Pick years and months: the maturity date fills in automatically"}</div>
+            {curType?.min_tenure_months != null && tenureTotal(f) > 0 && tenureTotal(f) < curType.min_tenure_months && <div className="small" style={{ color: "var(--red)", marginTop: 2 }}>{curType.label} needs at least {curType.min_tenure_months} months</div>}
+          </Field>
           <Field label="Payout"><select style={inp} disabled={lockedTerm} value={f.payout_frequency} onChange={(e) => setF({ ...f, payout_frequency: e.target.value })}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="at_maturity">Cumulative (at maturity)</option></select></Field>
         </> : <>
           <Field label="Monthly instalment (₹)"><input style={inp} type="number" disabled={lockedTerm} value={f.installment_amount} onChange={(e) => setF({ ...f, installment_amount: e.target.value })} onWheel={(e) => (e.target as HTMLInputElement).blur()} /></Field>
