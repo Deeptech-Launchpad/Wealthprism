@@ -12,7 +12,7 @@ import { deliver } from "../lib/delivery.js";
 const KEY = () => process.env.FIELD_ENCRYPTION_KEY ?? "dev-only-field-key";
 const PAN = /^[A-Z]{5}\d{4}[A-Z]$/, GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const ENTITY = z.object({ type: z.enum(["individual", "huf", "trust", "llp", "company"]), name: z.string().min(1).max(120), pan: z.string().regex(PAN, "PAN must look like ABCDE1234F").optional(), dob_or_incorp: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), tax_regime: z.enum(["old", "new"]).optional(), slab_rate: z.coerce.number().min(0).max(50).optional(), residential_status: z.string().max(40).optional() });
-const view = (e: any) => ({ id: e.id, type: e.type, name: e.name, pan_last4: e.pan_last4, dob_or_incorp: e.dob_or_incorp ? new Date(e.dob_or_incorp).toISOString().slice(0, 10) : null, tax_regime: e.tax_regime, slab_rate: e.slab_rate == null ? null : Number(e.slab_rate), residential_status: e.residential_status, gstins: e.gstins ?? [] });
+const view = (e: any) => ({ id: e.id, type: e.type, name: e.name, pan_last4: e.pan_last4, dob_or_incorp: e.dob_or_incorp ? (e.dob_or_incorp instanceof Date ? `${e.dob_or_incorp.getFullYear()}-${String(e.dob_or_incorp.getMonth() + 1).padStart(2, "0")}-${String(e.dob_or_incorp.getDate()).padStart(2, "0")}` : String(e.dob_or_incorp).slice(0, 10)) : null, tax_regime: e.tax_regime, slab_rate: e.slab_rate == null ? null : Number(e.slab_rate), residential_status: e.residential_status, gstins: e.gstins ?? [] });
 
 /** Routes that need a user but not a family header. */
 export async function accountRoutes(app: FastifyInstance) {

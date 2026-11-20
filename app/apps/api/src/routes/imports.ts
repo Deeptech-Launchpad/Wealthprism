@@ -52,8 +52,15 @@ async function resolveAccount(c: any, familyId: string, entityId: string, a: Par
   }
   return (await c.query("insert into accounts (family_id, entity_id, kind, provider, identifier_masked) values ($1,$2,$3,$4,$5) returning id", [familyId, entityId, a.kind, provider, a.identifier])).rows[0].id;
 }
-/** Apply one investment transaction: insert txn (dedup by hash), then maintain holding + lots. */
+/** Apply one investment transaction: insert txn (dedup by hash), then maintain holding + lots.
+ *  All-or-nothing: if anything fails (e.g. a sale of shares that are not held), everything this row wrote is undone, including its
+ *  duplicate-check hash and any empty holding, so the same row can be imported again once the cause is fixed. */
 export async function applyInvestmentTxn(c: any, familyId: string, entityId: string, t: ParsedInvestmentTxn, jobId: string | null) {
+  await c.query("savepoint apply_txn");
+  try { const r = await applyInvestmentTxnRow(c, familyId, entityId, t, jobId); await c.query("release savepoint apply_txn"); return r; }
+  catch (e) { await c.query("rollback to savepoint apply_txn"); await c.query("release savepoint apply_txn"); throw e; }
+}
+async function applyInvestmentTxnRow(c: any, familyId: string, entityId: string, t: ParsedInvestmentTxn, jobId: string | null) {
   const instrumentId = await resolveInstrument(c, t.instrument);
   const accountId = await resolveAccount(c, familyId, entityId, t.account, t.provider);
   const dup = await c.query("select 1 from investment_txns where family_id=$1 and hash=$2", [familyId, t.ref]);
@@ -74,8 +81,16 @@ export async function applyInvestmentTxn(c: any, familyId: string, entityId: str
     if (manual.rows[0]) await c.query("update lots set source_txn_id=$2 where id=$1", [manual.rows[0].id, txnId]);
     else await c.query("insert into lots (family_id, holding_id, buy_date, quantity, remaining_qty, unit_cost, charges, source_txn_id) values ($1,$2,$3,$4,$4,$5,$6,$7)", [familyId, holdingId, t.date, t.quantity, t.price, t.charges, txnId]);
   } else if (["sell", "redemption", "switch_out"].includes(kind)) {
-    const lots = (await c.query("select id, buy_date::text bd, quantity, remaining_qty, unit_cost, charges, grandfathered_fmv from lots where holding_id=$1 and remaining_qty > 0 order by buy_date", [holdingId])).rows
-      .map((l: any) => ({ id: l.id, buyDate: l.bd, quantity: Number(l.quantity), remainingQty: Number(l.remaining_qty), unitCost: Number(l.unit_cost), charges: Number(l.charges), fmv: l.grandfathered_fmv == null ? null : Number(l.grandfathered_fmv) }));
+    const toLot = (l: any) => ({ id: l.id, holdingId: l.holding_id, buyDate: l.bd, quantity: Number(l.quantity), remainingQty: Number(l.remaining_qty), unitCost: Number(l.unit_cost), charges: Number(l.charges), fmv: l.grandfathered_fmv == null ? null : Number(l.grandfathered_fmv) });
+    let lots = (await c.query("select id, holding_id, buy_date::text bd, quantity, remaining_qty, unit_cost, charges, grandfathered_fmv from lots where holding_id=$1 and remaining_qty > 0 order by buy_date", [holdingId])).rows.map(toLot);
+    // Shares the family entered by hand sit in the "manual" account, not the broker's. When the broker account does not hold enough, a
+    // sale of the same security by the same owner is taken from those shares too (oldest first), so a hand-entered holding can be sold.
+    if (lots.reduce((s: number, l: any) => s + l.remainingQty, 0) + 1e-6 < t.quantity) {
+      const extra = (await c.query(`select l.id, l.holding_id, l.buy_date::text bd, l.quantity, l.remaining_qty, l.unit_cost, l.charges, l.grandfathered_fmv
+          from lots l join holdings hh on hh.id = l.holding_id join accounts a on a.id = hh.account_id
+          where hh.entity_id=$1 and hh.instrument_id=$2 and hh.id <> $3 and a.provider = 'manual' and l.remaining_qty > 0 order by l.buy_date`, [entityId, instrumentId, holdingId])).rows.map(toLot);
+      lots = lots.concat(extra);
+    }
     // Section 112A grandfathering: equity bought before 1 Feb 2018 takes the higher of actual cost and the lower of (31 Jan 2018 FMV, sale price); the FMV comes from the lot or the instrument (loaded per ISIN)
     const instFmv = Number((await c.query("select (meta->>'fmv_31jan2018')::numeric v from instruments where id=$1", [instrumentId])).rows[0]?.v ?? 0) || null;
     const isEquity = t.instrument.type === "stock" || t.instrument.type === "etf" || (t.instrument.type === "mf" && String(ins.rows[0].asset_class ?? "equity") === "equity");
@@ -93,9 +108,14 @@ export async function applyInvestmentTxn(c: any, familyId: string, entityId: str
         [familyId, entityId, instrumentId, cn.lotId, txnId, fy, cn.buyDate, t.date, cn.qty, cost, proceeds, +(proceeds - cost).toFixed(2), long ? "long" : "short", ({ bond: "listed_bond", gsec: "listed_bond", tbill: "listed_bond", sgb: "sgb" } as Record<string, string>)[t.instrument.type] ?? "equity", grandfathered, grandfathered ? fmv : null]);
     }
   }
-  // recompute holding quantity and average cost from lots
+  // recompute quantity and average cost from lots for every holding of this security the owner has (a sale may have used shares entered by hand)
   await c.query(`update holdings h set quantity = s.q, avg_cost = case when s.q > 0 then s.c / s.q else 0 end, updated_at = now()
-     from (select coalesce(sum(remaining_qty),0) q, coalesce(sum(remaining_qty * unit_cost + case when quantity > 0 then charges * remaining_qty / quantity else 0 end),0) c from lots where holding_id=$1) s where h.id=$1`, [holdingId]);
+     from (select hh.id hid, coalesce(sum(l.remaining_qty),0) q, coalesce(sum(l.remaining_qty * l.unit_cost + case when l.quantity > 0 then l.charges * l.remaining_qty / l.quantity else 0 end),0) c
+           from holdings hh left join lots l on l.holding_id = hh.id where hh.entity_id=$1 and hh.instrument_id=$2 group by hh.id) s where h.id = s.hid`, [entityId, instrumentId]);
+  // a sale that was taken wholly from shares entered by hand leaves the broker account's row with no lots at all: drop that empty row
+  if (["sell", "redemption", "switch_out"].includes(kind)) await c.query(`delete from holdings h where h.id=$1
+     and not exists (select 1 from lots where holding_id=h.id) and not exists (select 1 from goal_links where holding_id=h.id) and not exists (select 1 from reconciliation_items where holding_id=h.id)
+     and not exists (select 1 from corporate_action_applications where holding_id=h.id) and not exists (select 1 from holding_receipts where holding_id=h.id) and not exists (select 1 from capital_calls where holding_id=h.id)`, [holdingId]);
   return "ok";
 }
 function fyOf(d: string) { const [y, m] = d.split("-").map(Number); const start = m >= 4 ? y : y - 1; return `${start}-${String(start + 1).slice(-2)}`; }
