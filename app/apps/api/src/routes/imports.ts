@@ -10,6 +10,7 @@ import { detect, parseAny, parseMappedContractNote, headerSignature, parseCasTex
 import { consumeFifo, foreclosureCreditMatches } from "@fo/finance";
 import { matchActuals } from "../jobs/planning.js";
 import { matchMoves } from "../lib/rebalance.js";
+import { matchProposalOrders } from "../lib/intentfills.js";
 import { syncOutflows } from "../lib/balance.js";
 import { autopost } from "../lib/gl.js";
 import { emitEvent } from "../lib/opendata.js";
@@ -282,6 +283,7 @@ export async function runImport(c: any, fam: string, userId: string | null, inpu
   // planned actions in executing scenarios are matched to the transactions this import brought in (FO-77)
   if (ok && status !== "failed") { try { const m = await matchActuals(c, fam); if (m.matched) log.push({ plan_actions_matched: m.matched, plan_variances: m.flagged }); } catch (e: any) { log.push({ message: `plan matching skipped: ${e.message}` }); } }
   if (ok && status !== "failed") { try { const r = await matchMoves(c, fam); if (r.matched) log.push({ rebalance_moves_matched: r.matched }); } catch (e: any) { log.push({ message: `rebalance matching skipped: ${e.message}` }); } }
+  if (ok && status !== "failed") { try { const r = await matchProposalOrders(c, fam); if (r.matched) log.push({ orders_reconciled: r.matched }); } catch (e: any) { log.push({ message: `order matching skipped: ${e.message}` }); } }
   if (ok && status !== "failed") { try { const g = await autopost(c, fam); if (g.posted || g.queued) log.push({ gl_posted: g.posted, gl_unposted: g.queued }); } catch (e: any) { log.push({ message: `gl auto-posting skipped: ${e.message}` }); } }
   await c.query("update import_jobs set status=$2, rows_total=$3, rows_ok=$4, rows_error=$5, error_log=$6, payload=null, finished_at=now() where id=$1", [jobId, status, total, ok, err, JSON.stringify(log)]);
   if (status !== "failed") await emitEvent(c, fam, "import.done", { import_job_id: jobId, status, rows_total: total, rows_ok: ok, rows_error: err, filename }).catch(() => null);
